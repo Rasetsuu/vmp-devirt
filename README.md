@@ -61,6 +61,8 @@ cargo build --release          # pure Rust (no LLVM link)
 cargo build --release --features llvm   # llvm-sys link check
 pip install triton-library capstone pefile   # python helpers
 # Remill (optional lifter backend): build upstream, export REMILL_LIFT=<path>/remill-lift
+# Souper (optional MBA superoptimizer): external only, wire its `souper` CLI
+#   to scripts/triton_handlers.py output if desired; not vendored.
 ```
 
 Dockerfile reproduces the full env. CI runs `cargo test` with no

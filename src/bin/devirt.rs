@@ -15,11 +15,18 @@ fn main() -> Result<()> {
         eprintln!("usage:");
         eprintln!("  devirt scan <binary>            # detect version + list fetch/handler addrs");
         eprintln!("  devirt mine <binary> <site-va>  # mine cryptor chain at a fetch site");
+        eprintln!("  devirt merge <trace...>         # union edges + divergence points (.bin u64LE)");
         std::process::exit(2);
     }
-    let bin = PEBinary::load(&args[2]).with_context(|| format!("load {}", args[2]))?;
+    let bin = if args[1].as_str() == "merge" {
+        // Merge works on raw trace files; load a dummy later per-branch.
+        None
+    } else {
+        Some(PEBinary::load(&args[2]).with_context(|| format!("load {}", args[2]))?)
+    };
     match args[1].as_str() {
         "scan" => {
+            let bin = bin.as_ref().unwrap();
             for f in frontends() {
                 let applies = f.detect(&bin).unwrap_or(false);
                 println!("frontend {:<10} applies={}", f.name(), applies);
@@ -36,6 +43,7 @@ fn main() -> Result<()> {
                 std::process::exit(2);
             }
             let va = u64::from_str_radix(args[3].trim_start_matches("0x"), 16)?;
+            let bin = bin.as_ref().unwrap();
             let bytes = bin.read_bytes(va, 16)?;
             let mut d = iced_x86::Decoder::with_ip(
                 64,
@@ -55,6 +63,24 @@ fn main() -> Result<()> {
             };
             let m = mine_cryptor(&site, &bin)?;
             println!("site {:#x} key={} steps={} {:?}", va, m.key_reg, m.steps, m.cryptor.cmds);
+        }
+        other if other == "merge" => {
+            if args.len() < 4 {
+                eprintln!("merge needs at least one trace file");
+                std::process::exit(2);
+            }
+            use vmp_devirt::backend::merge::{divergence_points, merge_edges};
+            let mut traces = Vec::new();
+            for p in &args[2..] {
+                let b = std::fs::read(p).with_context(|| format!("read {}", p))?;
+                traces.push(b.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect::<Vec<u64>>());
+            }
+            let edges = merge_edges(&traces);
+            let div = divergence_points(&edges);
+            println!("traces={} edges={} divergence_points={}", traces.len(), edges.len(), div.len());
+            for (a, succ) in div.iter().take(30) {
+                println!("  vbraddr {:#x}: {}", a, succ.iter().map(|s| format!("{:#x}", s)).collect::<Vec<_>>().join(" | "));
+            }
         }
         other => {
             eprintln!("unknown command: {}", other);
