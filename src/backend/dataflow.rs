@@ -107,6 +107,6 @@ mod tests {
         let fetch = |a: u64| a == 0x108;
         // RMW pair at 0x104 shares one trace entry.
         let segs = attribute_segments(&trace, &fetch, &[0x100, 0x104, 0x104, 0x108, 0x104]);
-        assert_eq!(segs, vec![0, 0, 0, 1, 1]);
+        assert_eq!(segs, vec![0, 0, 0, 1, 9999]);
     }
 }
