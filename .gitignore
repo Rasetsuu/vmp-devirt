@@ -1,0 +1,6 @@
+/target
+/data
+*.bin
+*.ll
+*.bc
+*.o

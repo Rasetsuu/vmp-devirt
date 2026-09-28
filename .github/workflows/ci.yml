@@ -1,0 +1,16 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: system deps
+        run: sudo apt-get update && sudo apt-get install -y llvm-22-dev libclang-22-dev clang-22 python3-pip
+      - name: python deps
+        run: pip3 install triton-library capstone pefile
+      - name: build
+        run: cargo build --release
+      - name: test (no commercial fixtures; fixture-only tests run, sample tests skip)
+        run: cargo test --release

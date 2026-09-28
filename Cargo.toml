@@ -1,0 +1,27 @@
+[package]
+name = "vmp-devirt"
+version = "0.1.0"
+edition = "2021"
+description = "Trace-assisted VMProtect devirtualization research (1.x/2.x/3.x front-ends, shared LLVM backend)"
+license = "MIT"
+
+[lib]
+name = "vmp_devirt"
+path = "src/lib.rs"
+
+[dependencies]
+goblin = "0.7"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+iced-x86 = "1.21"
+unicorn-engine = "2.0"
+unicorn-engine-sys = "2.1"
+llvm-sys = { version = "221", optional = true }
+
+[features]
+default = []
+llvm = ["llvm-sys"]
+
+[profile.release]
+opt-level = 3
