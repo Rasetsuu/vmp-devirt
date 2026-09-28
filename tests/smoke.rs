@@ -39,8 +39,7 @@ fn fixture_pe(blob: &[u8]) -> PEBinary {
 }
 
 #[test]
-fn mines_handbuilt_chain() {
-    // movzx ecx,[rbx]; inc rbx(junk); xor cl,r11b; inc cl; xor cl,6; rol cl,1; jmp +0
+fn mines_handbuilt_chain() {    // movzx ecx,[rbx]; inc rbx(junk); xor cl,r11b; inc cl; xor cl,6; rol cl,1; jmp +0
     let blob: &[u8] = &[
         0x0F, 0xB6, 0x0B, // movzx ecx, byte ptr [rbx]
         0x48, 0xFF, 0xC3, // inc rbx (skipped junk)
@@ -66,4 +65,21 @@ fn mines_handbuilt_chain() {
         let expect = cr.encrypt((raw ^ key) as u64) as u8;
         assert_eq!(m.decode(raw, key), expect, "raw {raw:#x} key {key:#x}");
     }
+}
+
+#[test]
+fn mines_fixture_file() {
+    // Checked-in fixture binary: exercises the file-load path in CI.
+    let bin = PEBinary::load("tests/fixtures/vmp_test.bin").expect("fixture");
+    assert_eq!(bin.image_base().unwrap(), 0x140000000);
+    let site = FetchSite { va: 0x140001000, base: Register::RBX, dst: Register::ECX, len: 3 };
+    let m = mine_cryptor(&site, &bin).expect("mine file");
+    assert_eq!(m.key_reg, "r11l");
+    assert_eq!(m.steps, 3);
+    // Same chain by hand (must agree with in-memory twin above).
+    let mut cr = ValueCryptor::new(CryptSize::Byte);
+    cr.add(CryptOp::Inc, 0);
+    cr.add(CryptOp::Xor, 6);
+    cr.add(CryptOp::Rol, 1);
+    assert_eq!(m.decode(0x3e, 0xf6), cr.encrypt(0x3e ^ 0xf6) as u8);
 }

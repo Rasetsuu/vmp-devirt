@@ -6,3 +6,4 @@
 pub mod value_cryptor;
 pub mod lifter;
 pub mod llvm_pipeline;
+pub mod dataflow;

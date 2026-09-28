@@ -9,6 +9,10 @@ license = "MIT"
 name = "vmp_devirt"
 path = "src/lib.rs"
 
+[[bin]]
+name = "devirt"
+path = "src/bin/devirt.rs"
+
 [dependencies]
 goblin = "0.7"
 anyhow = "1.0"

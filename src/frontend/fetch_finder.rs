@@ -148,8 +148,12 @@ mod tests {
 
     #[test]
     fn finds_152_in_virt_all() {
-        // This test requires the ground-truth binary present.
-        let path = std::env::var("VMP_TEST_BIN").unwrap_or_else(|_| "./tests/fixtures/vmp_test.bin".to_string());
+        // Needs the licensed ground-truth binary; the checked-in fixture
+        // is synthetic (1 site), so skip unless VMP_TEST_BIN is explicit.
+        let path = match std::env::var("VMP_TEST_BIN") {
+            Ok(p) => p,
+            Err(_) => return,
+        };
         let bin = match PEBinary::load(path) {
             Ok(b) => b,
             Err(_) => return, // skip in CI without binary
