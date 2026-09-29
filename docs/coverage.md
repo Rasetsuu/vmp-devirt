@@ -35,6 +35,16 @@ foreign watchlist barely fires. Per-mode mining is the follow-up.
 `scripts/branch_solve.py` on add2 branch-watch run: 5 divergent sites,
 4 perfect (2202/2202, 88/88, 3994/3996, 779/779, 100/100).
 
+## Recompilability (factory port)
+
+`recompile` generalized (`FETCH_VA` env, generic snapshot loader —
+was Open.exe-hardcoded + fixed section names): add2 segment between
+`0x140eb8c73` visits = 74065 blocks / 3874 unique, **3325 → .o via
+Remill + opt -O3 + llc (86%), `ld -r` links `seg1.o` (3.8MB)**.
+Loop needs >500s for full coverage (timeout killed at 86%; link
+verified manually). Runnable-driver + ABI stitching still open —
+objects compose, execution not yet replayed.
+
 ## Dispatch tables + handler extents (VMPredator §III transplant)
 
 `devirt dispatch <trace.bin> <binary>` (`src/backend/dispatch.rs`):
