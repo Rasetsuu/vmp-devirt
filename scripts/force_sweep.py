@@ -8,7 +8,7 @@ structural alternative once each, union new coverage vs baseline.
 - One force_edge run per site (FORCES=1, BOUND=2M), forced-only addrs counted.
 - Ranks hot sites first; top-N via argv.
 
-Usage: force_sweep.py <baseline-dir> <binary> <out-dir> [top-n]
+Usage: force_sweep.py <baseline-dir> <binary> <out-dir> [top-n] [offset]
 Baseline dir holds open_trace.bin + open_bases.json + open_mem_*.bin.
 """
 import json
@@ -46,6 +46,7 @@ def read(secs, va, n):
 def main():
     bdir, binary, outdir = sys.argv[1], sys.argv[2], sys.argv[3]
     topn = int(sys.argv[4]) if len(sys.argv) > 4 else 30
+    off = int(sys.argv[5]) if len(sys.argv) > 5 else 0
     os.makedirs(outdir, exist_ok=True)
     raw = open(bdir + "/open_trace.bin", "rb").read()
     trs = struct.unpack("<%dQ" % (len(raw) // 8), raw)
@@ -83,7 +84,7 @@ def main():
     print("single-path jcc with structural alt: %d (top %d)" % (len(cands), topn))
     new_total = set()
     promo_total = set()
-    for i, (c, va, mn, obs, alt) in enumerate(cands[:topn]):
+    for i, (c, va, mn, obs, alt) in enumerate(cands[off:off + topn]):
         dd = "%s/site_%02d_%x" % (outdir, i, va)
         os.makedirs(dd, exist_ok=True)
         env = dict(os.environ, BIN_PATH=binary, DATA_DIR=dd,
