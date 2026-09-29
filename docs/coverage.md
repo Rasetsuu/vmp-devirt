@@ -53,6 +53,18 @@ show call-hidden dispatch (`stop=call`), concrete + BVROL/BVADD store
 exprs; top add2 dispatcher has 68 targets. Call-following + multi-path
 are the queued v2.
 
+## Dispatcher learning (idea 3 v1)
+
+`scripts/learn_dispatch.py` on the 50k-hit branch corpus: decision
+trees over live regs -> outcome, plus depth-1 search over relational
+features (`a>b`, `a==b`). Raw-reg trees find proxies (0.99);
+relational search finds causes: **`rsi>rbp` at 1.0000 for
+`0x1410cc2be` — the hand-derived `cmp rsi,rbp`/`ja` ground truth
+(2202/2202), rediscovered with zero disassembly.** Second site
+`rsi>r10` at 0.9961. Rules double as generative flip-regions for
+idea 2 forcing. Only 2/1258 watch sites diverge enough to learn
+(rest single-path in this corpus — the coverage wall, quantified).
+
 ## Per-mode cryptor mining
 
 `devirt scan` detects vmp3-fdj on all four binaries (500+ strict sites
