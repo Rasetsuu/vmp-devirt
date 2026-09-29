@@ -82,11 +82,13 @@ def main():
     cands.sort(reverse=True)
     print("single-path jcc with structural alt: %d (top %d)" % (len(cands), topn))
     new_total = set()
+    promo_total = set()
     for i, (c, va, mn, obs, alt) in enumerate(cands[:topn]):
         dd = "%s/site_%02d_%x" % (outdir, i, va)
         os.makedirs(dd, exist_ok=True)
         env = dict(os.environ, BIN_PATH=binary, DATA_DIR=dd,
-                   BOUND="2000000", FORCES="1")
+                   BOUND="2000000", FORCES="1",
+                   KNOWN_BIN=bdir + "/open_trace.bin", DERAIL_MAX="128")
         try:
             r = subprocess.run(
                 [FORCE_EDGE, START, hex(va), hex(alt)],
@@ -104,11 +106,29 @@ def main():
             fset = set(a for a in ftrs if 0x140000000 <= a < 0x142000000)
             new = fset - base
             new_total |= new
-            print("    forced-only=%d cum=%d" % (len(new), len(new_total)))
+            # promote: movzx/movsx byte-mem among new addrs (overlay disasm)
+            promo = set()
+            for na in new:
+                code = read(secs, na, 6)
+                if not code:
+                    continue
+                for ins in md.disasm(code, na, count=1):
+                    if ins.mnemonic in ("movzx", "movsx") and "[" in ins.op_str:
+                        promo.add(na)
+            promo_total |= promo
+            dj = {}
+            try:
+                dj = json.load(open(dd + "/forced.json"))
+            except Exception:
+                pass
+            print("    forced-only=%d promo=%d cum=%d derailed=%s"
+                  % (len(new), len(promo), len(new_total),
+                     dj.get("derailed", "?")))
         except Exception as e:
             print("    no trace: %s" % e)
-    print("TOTAL new addrs: %d" % len(new_total))
+    print("TOTAL new addrs: %d promo fetch: %d" % (len(new_total), len(promo_total)))
     json.dump(sorted(new_total), open(outdir + "/new_addrs.json", "w"))
+    json.dump(sorted(promo_total), open(outdir + "/promo_fetch.json", "w"))
 
 
 main()
