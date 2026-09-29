@@ -73,14 +73,16 @@ fall-through proved mechanics with 0 new code — expected.
 `scripts/force_sweep.py`: 2095 single-path jcc sites enumerated from
 the baseline trace (full-trace, not watch-limited); top-30 hottest
 forced once each to the structural alternative (`FORCES=1`).
-**546 forced-only addrs total.** Quality split: ~411 genuine
-untaken-path code (small excursions, in-image ends — e.g. sites
-[22]/[27] +33 each, [24] +27); ~135 derailment scribble from 2 runs
-([17] `jp`, [28] `jg`) that escaped the image (`uniq≈steps`, ends
-outside `0x140-0x142`). 2/30 sites forced 0x — stale-SMC entries,
-never executed live. v3 needs a derailment guard (halt outside
-known-code union) + fetch re-mining inside new code to promote
-addrs to handlers.
+Unguarded: **546** forced-only addrs (~411 genuine untaken-path code,
+~135 derailment scribble from 2 escaped runs, 2/30 stale-SMC 0-force).
+Guarded re-run (`KNOWN_BIN`/`DERAIL_MAX=128`): **489**, derailers
+truncated early (e.g. `jp` 2M steps→stopped at guard trip).
+Derailment is nondeterministic scribble run-to-run (63 vs 1.6M same
+command) — the guard keeps the deterministic prefix and drops chaos.
+Promotion scan found **0** fetch sites in new code: final-dump bytes
+are the wrong source (SMC re-encrypted); promotion needs live
+hit-time capture in `force_edge` (queued). `forced.json` is now
+valid JSON (was unquoted `res`).
 
 ## Per-mode cryptor mining
 
