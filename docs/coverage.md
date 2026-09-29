@@ -65,17 +65,22 @@ relational search finds causes: **`rsi>rbp` at 1.0000 for
 idea 2 forcing. Only 2/1258 watch sites diverge enough to learn
 (rest single-path in this corpus — the coverage wall, quantified).
 
-## Forcing (idea 2 v1)
+## Forcing (idea 2 v1 + v2 sweep)
 
-`force_edge` (`vmp_devirt_prod` `6fb9a40`: same Unicorn setup as the
-tracer plus RIP override at a force site, pre-force regs logged).
-Forcing `0x1410cc2be`→fall-through every visit fires 22x, reroutes to
-`end=0x140e9dec9` in 20k steps — mechanics proven. Forced-only
-coverage: **0**, the fall path being already observed 26x naturally.
-Lesson: forcing observed edges reroutes but adds no code; v2 must
-enumerate *single-path* jcc sites and force their structural
-alternative (disasm-derived fall-through/target). That's the coverage
-engine; v1 built its motor.
+v1 (`force_edge`, `vmp_devirt_prod` `6fb9a40`): forcing the observed
+fall-through proved mechanics with 0 new code — expected.
+
+`scripts/force_sweep.py`: 2095 single-path jcc sites enumerated from
+the baseline trace (full-trace, not watch-limited); top-30 hottest
+forced once each to the structural alternative (`FORCES=1`).
+**546 forced-only addrs total.** Quality split: ~411 genuine
+untaken-path code (small excursions, in-image ends — e.g. sites
+[22]/[27] +33 each, [24] +27); ~135 derailment scribble from 2 runs
+([17] `jp`, [28] `jg`) that escaped the image (`uniq≈steps`, ends
+outside `0x140-0x142`). 2/30 sites forced 0x — stale-SMC entries,
+never executed live. v3 needs a derailment guard (halt outside
+known-code union) + fetch re-mining inside new code to promote
+addrs to handlers.
 
 ## Per-mode cryptor mining
 
