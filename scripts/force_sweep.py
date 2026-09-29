@@ -121,8 +121,21 @@ def main():
                 dj = json.load(open(dd + "/forced.json"))
             except Exception:
                 pass
-            print("    forced-only=%d promo=%d cum=%d derailed=%s"
-                  % (len(new), len(promo), len(new_total),
+            # promote: mine live-captured force-target code (forced.json
+            # pre-records are mine-hits compatible).
+            chains = 0
+            try:
+                r2 = subprocess.run(
+                    ["./target/debug/devirt", "mine-hits", dd + "/forced.json"],
+                    capture_output=True, text=True, timeout=120,
+                    cwd="/home/ciupix/RE/vmp-devirt")
+                for l in r2.stdout.splitlines():
+                    if l.startswith("site "):
+                        chains += 1
+            except Exception:
+                pass
+            print("    forced-only=%d promo=%d chains=%d cum=%d derailed=%s"
+                  % (len(new), len(promo), chains, len(new_total),
                      dj.get("derailed", "?")))
         except Exception as e:
             print("    no trace: %s" % e)

@@ -253,10 +253,16 @@ fn main() -> Result<()> {
             }
             use vmp_devirt::frontend::cryptor_miner::mine_cryptor_with;
             let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&args[2])?)?;
+            // Accepts a hits array (open_hits.json) or a forced.json
+            // object (mines its "pre" force-target records).
+            let arr: Vec<serde_json::Value> = match &v {
+                serde_json::Value::Array(a) => a.clone(),
+                serde_json::Value::Object(m) => m.get("pre").and_then(|p| p.as_array()).cloned().unwrap_or_default(),
+                _ => Vec::new(),
+            };
             // Distinct sites -> first hit's code bytes (hit-time live).
             let mut sites: std::collections::BTreeMap<u64, Vec<u8>> = std::collections::BTreeMap::new();
-            if let Some(arr) = v.as_array() {
-                for x in arr {
+            for x in &arr {
                     let va = match x.get("site").and_then(|s| s.as_str()).and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()) {
                         Some(a) => a,
                         None => continue,
