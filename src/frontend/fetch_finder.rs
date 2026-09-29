@@ -22,7 +22,9 @@ pub struct FetchSite {
 }
 
 fn is_movzx_byte_mem(ins: &Instruction) -> bool {
-    if ins.mnemonic() != Mnemonic::Movzx { return false; }
+    // movzx OR movsx: SMC flips the opcode bit (B6<->BE) between static
+    // and live bytes; low8 chain semantics are identical.
+    if ins.mnemonic() != Mnemonic::Movzx && ins.mnemonic() != Mnemonic::Movsx { return false; }
     if ins.op_count() != 2 { return false; }
     if ins.op0_kind() != OpKind::Register { return false; }
     if ins.op1_kind() != OpKind::Memory { return false; }
