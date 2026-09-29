@@ -35,11 +35,17 @@ foreign watchlist barely fires. Per-mode mining is the follow-up.
 `scripts/branch_solve.py` on add2 branch-watch run: 5 divergent sites,
 4 perfect (2202/2202, 88/88, 3994/3996, 779/779, 100/100).
 
-## Dispatch tables
+## Dispatch tables + handler extents (VMPredator §III transplant)
 
-`devirt dispatch <trace.bin> <binary>` (see `src/backend/dispatch.rs`):
+`devirt dispatch <trace.bin> <binary>` (`src/backend/dispatch.rs`):
 add2 570 indirect sites (11-target max observed), sub2 515,
 Mutation 226.
+`devirt handlers <trace> <memlog> <binary>` (`src/backend/handlers.rs`):
+jump-to-jump segments over stack-region result-stores — add2 gives
+**570 handlers from 570 dispatchers (1:1)**, Mutation 226/226.
+Dispatchers and handler extents cross-validate from opposite directions
+with zero fetch patterns. Needs release build on 6M+ traces
+(debug too slow); `PEBinary::section_map` fast path in `pe_loader.rs`.
 
 ## Per-mode cryptor mining
 
