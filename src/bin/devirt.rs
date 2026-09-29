@@ -263,21 +263,20 @@ fn main() -> Result<()> {
             // Distinct sites -> first hit's code bytes (hit-time live).
             let mut sites: std::collections::BTreeMap<u64, Vec<u8>> = std::collections::BTreeMap::new();
             for x in &arr {
-                    let va = match x.get("site").and_then(|s| s.as_str()).and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()) {
-                        Some(a) => a,
-                        None => continue,
-                    };
-                    if sites.contains_key(&va) {
-                        continue;
-                    }
-                    let code = match x.get("code").and_then(|s| s.as_str()) {
-                        Some(s) => s,
-                        None => continue,
-                    };
-                    let bytes: Vec<u8> = (0..code.len()).step_by(2).filter_map(|i| u8::from_str_radix(&code[i..(i + 2).min(code.len())], 16).ok()).collect();
-                    if !bytes.is_empty() {
-                        sites.insert(va, bytes);
-                    }
+                let va = match x.get("site").and_then(|s| s.as_str()).and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()) {
+                    Some(a) => a,
+                    None => continue,
+                };
+                if sites.contains_key(&va) {
+                    continue;
+                }
+                let code = match x.get("code").and_then(|s| s.as_str()) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let bytes: Vec<u8> = (0..code.len()).step_by(2).filter_map(|i| u8::from_str_radix(&code[i..(i + 2).min(code.len())], 16).ok()).collect();
+                if !bytes.is_empty() {
+                    sites.insert(va, bytes);
                 }
             }
             let mut ok = 0usize;
