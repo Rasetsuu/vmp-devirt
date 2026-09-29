@@ -55,8 +55,11 @@ fn main() -> Result<()> {
                 iced_x86::DecoderOptions::NONE,
             );
             let movzx = d.decode();
-            if movzx.mnemonic() != iced_x86::Mnemonic::Movzx {
-                anyhow::bail!("{:#x} is not a movzx fetch site", va);
+            // movsx accepted too: SMC flips B6<->BE (cf. fetch_finder).
+            if movzx.mnemonic() != iced_x86::Mnemonic::Movzx
+                && movzx.mnemonic() != iced_x86::Mnemonic::Movsx
+            {
+                anyhow::bail!("{:#x} is not a movzx/movsx fetch site", va);
             }
             let site = FetchSite {
                 va,
