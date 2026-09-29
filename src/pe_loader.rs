@@ -138,6 +138,33 @@ impl PEBinary {
             bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
+    /// Section map parsed once: (va_start, va_end, file_offset).
+    /// End covers max(virtual_size, size_of_raw_data); use for fast
+    /// repeated VA reads without re-parsing the PE per call.
+    pub fn section_map(&self) -> Result<Vec<(u64, u64, usize)>> {
+        let pe = self.parse_pe()?;
+        let image_base = pe.header.optional_header
+            .map(|oh| oh.windows_fields.image_base)
+            .unwrap_or(0x140000000);
+        let mut out = Vec::new();
+        for s in &pe.sections {
+            let start = image_base + s.virtual_address as u64;
+            let span = s.virtual_size.max(s.size_of_raw_data) as u64;
+            out.push((start, start + span, s.pointer_to_raw_data as usize));
+        }
+        Ok(out)
+    }
+
+    /// Read bytes via a pre-parsed [`section_map`](Self::section_map).
+    pub fn read_via(&self, map: &[(u64, u64, usize)], va: u64, n: usize) -> Option<Vec<u8>> {
+        for (start, end, raw) in map {
+            if va >= *start && va + n as u64 <= *end {
+                let off = *raw + (va - start) as usize;
+                return self.data.get(off..off + n).map(|b| b.to_vec());
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

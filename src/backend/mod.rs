@@ -10,3 +10,4 @@ pub mod dataflow;
 pub mod merge;
 pub mod sensor;
 pub mod dispatch;
+pub mod handlers;

@@ -21,10 +21,12 @@ fn main() -> Result<()> {
         eprintln!("  devirt dispatch <trace.bin> <binary>  # indirect-jmp successor tables");
         eprintln!("  devirt mine-live <snapdir> <site-va>  # mine chain from snapshot overlay (live bytes)");
         eprintln!("  devirt mine-hits <open_hits.json>     # mine all hit sites from hit-time code");
+        eprintln!("  devirt handlers <trace> <memlog> <bin>  # handler blocks via vctx-stores + back-slice");
         std::process::exit(2);
     }
-    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits"].contains(&args[1].as_str()) {
-        // Merge/sense/dispatch/mine-live/mine-hits work on raw files, not PEs.
+    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers"].contains(&args[1].as_str()) {
+        // Merge/sense/dispatch/mine-live/mine-hits/handlers work on raw
+        // files, not PEs (handlers takes its binary as args[4]).
         None
     } else {
         Some(PEBinary::load(&args[2]).with_context(|| format!("load {}", args[2]))?)
@@ -304,6 +306,57 @@ fn main() -> Result<()> {
                 }
             }
             println!("mined {}/{} hit sites", ok, sites.len());
+        }
+        other if other == "handlers" => {
+            if args.len() < 5 {
+                eprintln!("handlers needs <trace.bin> <memlog.bin> <binary>");
+                std::process::exit(2);
+            }
+            use vmp_devirt::backend::handlers::detect_handlers;
+            use std::collections::HashSet;
+            let tb = std::fs::read(&args[2]).with_context(|| format!("read {}", args[2]))?;
+            let trace: Vec<u64> = tb.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+            let mb = std::fs::read(&args[3]).with_context(|| format!("read {}", args[3]))?;
+            const REC: usize = 33;
+            let mut writes = Vec::new();
+            for c in mb.chunks_exact(REC) {
+                let rip = u64::from_le_bytes(c[0..8].try_into().unwrap());
+                let w = c[8] == 1;
+                let addr = u64::from_le_bytes(c[9..17].try_into().unwrap());
+                if !w {
+                    continue;
+                }
+                // Virtual context = stack range (paper §II-B: VM reuses the
+                // stack frame; rsp-region stores are result-stores).
+                if (addr & 0xFFF00000) != 0x7FF00000 {
+                    continue;
+                }
+                writes.push((rip, addr));
+            }
+            let bin = PEBinary::load(&args[4]).with_context(|| format!("load {}", args[4]))?;
+            let map = bin.section_map()?;
+            let uniq: std::collections::BTreeSet<u64> = trace.iter().cloned().collect();
+            let mut indirect: HashSet<u64> = HashSet::new();
+            for va in uniq {
+                let bytes = match bin.read_via(&map, va, 6) {
+                    Some(b) => b,
+                    None => continue,
+                };
+                let mut d = iced_x86::Decoder::with_ip(64, &bytes, va, iced_x86::DecoderOptions::NONE);
+                let ins = d.decode();
+                if ins.mnemonic() == iced_x86::Mnemonic::Jmp
+                    && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
+                {
+                    indirect.insert(va);
+                }
+            }
+            let blocks = detect_handlers(&trace, &writes, &|va| indirect.contains(&va));
+            println!("writes={} indirect_jmps={} handlers={}", writes.len(), indirect.len(), blocks.len());
+            let mut ranked = blocks.clone();
+            ranked.sort_by_key(|b| (b.executions, b.stores.len()));
+            for b in ranked.iter().rev().take(25) {
+                println!("  {:#x} exec={} stores={}", b.start, b.executions, b.stores.len());
+            }
         }
         other => {
             eprintln!("unknown command: {}", other);
