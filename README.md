@@ -75,7 +75,7 @@ commercial fixtures (sample-gated tests skip; `tests/smoke.rs` always runs).
 | `DATA_DIR` | `./data` | all tool artifacts |
 | `WATCH_FILE` | `$DATA_DIR/watch.txt` | fetch VAs to watch |
 | `CARDS` | `open_cards3.json` | Remill card cache file |
-| `BIN_PATH` | `/tmp/Open.exe` (tools) | target binary |
+| `BIN_PATH` | target binary path (tools default: `./target.exe` placeholder) | target binary |
 | `IAT_JSON` | — | `{api_name: iat_va}` import stub map |
 | `VMP_TEST_BIN` / `VMP_ORACLE` | `tests/fixtures/…` | licensed-sample tests |
 | `REMILL_LIFT` | `remill-lift` on PATH | Remill lift binary |
