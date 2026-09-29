@@ -80,9 +80,14 @@ truncated early (e.g. `jp` 2M steps→stopped at guard trip).
 Derailment is nondeterministic scribble run-to-run (63 vs 1.6M same
 command) — the guard keeps the deterministic prefix and drops chaos.
 Promotion scan found **0** fetch sites in new code: final-dump bytes
-are the wrong source (SMC re-encrypted); promotion needs live
-hit-time capture in `force_edge` (queued). `forced.json` is now
-valid JSON (was unquoted `res`).
+are the wrong source (SMC re-encrypted). Answered by live capture:
+`force_edge` now records 256B at each force target into
+`forced.json` pre-records, and `mine-hits` reads that shape
+(`d63413a` — which also fixed a brace regression my suppressed
+`2>/dev/null` build had masked; builds now checked visibly).
+`force_sweep.py` mines chains per site automatically. Verified:
+forced target parses (0/1, correctly skipped non-fetch),
+add2_dyn still 2/5.
 
 ## Per-mode cryptor mining
 
