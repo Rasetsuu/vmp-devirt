@@ -46,6 +46,12 @@ jump-to-jump segments over stack-region result-stores — add2 gives
 Dispatchers and handler extents cross-validate from opposite directions
 with zero fetch patterns. Needs release build on 6M+ traces
 (debug too slow); `PEBinary::section_map` fast path in `pe_loader.rs`.
+`scripts/extract_handlers.py` (paper §III step 3 v1): Triton emulation
+of handler segments (trace-derived entry past the dispatcher), symbolic
+regs, concrete overlay/stack; keeps vctx-store ASTs. Mutation handlers
+show call-hidden dispatch (`stop=call`), concrete + BVROL/BVADD store
+exprs; top add2 dispatcher has 68 targets. Call-following + multi-path
+are the queued v2.
 
 ## Per-mode cryptor mining
 
