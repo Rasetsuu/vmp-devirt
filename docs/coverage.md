@@ -56,7 +56,11 @@ bytes; `mine` also accepts movsx — SMC flips B6↔BE):
 
 Unmined sites are call-hidden cryptors (`movzx; mov; call`):
 miner v2 (`mine_cryptor_with`, call-follow depth-1, snapshot-overlay
-reader) mines +3/40 on add2 static (22→25/40). Live-overlay `mine`
-CLI (snapshot dir as byte source) is the remaining step.
+reader) mines +3/40 on add2 static (22→25/40).
+New CLI: `mine-live <snapdir> <site>` (overlay sections) and
+`mine-hits <open_hits.json>` (hit-time code). Cross-check on
+`0x140eb8c73`: file bytes, overlay, and hit-time agree
+(key=dil, Neg→Not→Neg→Ror1). Distant call/jmp targets outside the
+captured window stay unmined — full-section live dumps close that.
 Key-register sets differ per mode: per-mode mining is required, a
 single watchlist/cryptor does not transfer.
