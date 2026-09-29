@@ -54,7 +54,9 @@ bytes; `mine` also accepts movsx — SMC flips B6↔BE):
 | Ultra | 28/40 | r10l, sil, dil, bpl | 8 steps | longest chains, mixed keys |
 | Virtualization | 29/40 | r9l, sil, r8l, r11l | 8 steps | r9l-dominant |
 
-Unmined sites (~30–50%) are call-hidden cryptors (`movzx; mov; call`,
-miner stops at `call`) — known 3.9.4-b2285 shape, queued as miner v2.
+Unmined sites are call-hidden cryptors (`movzx; mov; call`):
+miner v2 (`mine_cryptor_with`, call-follow depth-1, snapshot-overlay
+reader) mines +3/40 on add2 static (22→25/40). Live-overlay `mine`
+CLI (snapshot dir as byte source) is the remaining step.
 Key-register sets differ per mode: per-mode mining is required, a
 single watchlist/cryptor does not transfer.
