@@ -51,8 +51,14 @@ fn reg_name(r: Register) -> String {
 /// Mine the cryptor chain starting at the fetch site.
 /// Follows conditional-branch targets (worklist) since VMP splits chains
 /// across `jcc` (e.g. `0x140237587`: `not sil` lives past a `jle`).
-/// Unconditional jmp/call/ret ends a path (terminal dispatch).
-pub fn mine_cryptor(site: &FetchSite, binary: &crate::pe_loader::PEBinary) -> Result<MinedCryptor> {
+/// Direct calls are followed one level (call-hidden cryptors, 3.9.4).
+/// Unconditional jmp/ret ends a path (terminal dispatch).
+/// `read` supplies bytes for any VA — file bytes, or a snapshot
+/// overlay for runtime-decrypted regions (protector-grade targets).
+pub fn mine_cryptor_with(
+    site: &FetchSite,
+    read: &dyn Fn(u64, usize) -> Option<Vec<u8>>,
+) -> Result<MinedCryptor> {
     use std::collections::HashSet;
     let dst8 = low8_of(site.dst);
     let mut cryptor = ValueCryptor::new(CryptSize::Byte);
@@ -60,13 +66,14 @@ pub fn mine_cryptor(site: &FetchSite, binary: &crate::pe_loader::PEBinary) -> Re
     let mut steps = 0usize;
     let mut found_key_mix = false;
     let mut visited: HashSet<u64> = HashSet::new();
-    let mut worklist = vec![site.va];
+    // (ip, call_depth): follow direct calls once (call-hidden cryptors).
+    let mut worklist = vec![(site.va, 0u8)];
     let mut total = 0usize;
-    while let Some(mut ip) = worklist.pop() {
+    while let Some((mut ip, depth)) = worklist.pop() {
         if !visited.insert(ip) { continue; }
-        let code = match binary.read_bytes(ip, 128) {
-            Ok(b) => b,
-            Err(_) => continue,
+        let code = match read(ip, 128) {
+            Some(b) => b,
+            None => continue,
         };
         let mut decoder = Decoder::with_ip(64, &code, ip, DecoderOptions::NONE);
         let dump = std::env::var("MINER_DUMP").is_ok();
@@ -77,14 +84,31 @@ pub fn mine_cryptor(site: &FetchSite, binary: &crate::pe_loader::PEBinary) -> Re
             if dump { eprintln!("  miner {:#x}: {}", ins.ip(), ins); }
             ip = decoder.ip();
             total += 1;
-            if first { first = false; continue; } // skip fetch movzx
+            if first {
+                first = false;
+                // Skip a leading fetch (movzx/movsx) only; chain-start
+                // sites (xor dst,key) must be processed, not skipped.
+                if ins.mnemonic() == Mnemonic::Movzx || ins.mnemonic() == Mnemonic::Movsx {
+                    continue;
+                }
+            }
             if first_in_path { first_in_path = false; } // path-start IP is in visited by construction
             else if !visited.insert(ins.ip()) { break; } // loop guard
             match ins.mnemonic() {
-                Mnemonic::Jmp | Mnemonic::Call | Mnemonic::Ret => break, // terminal dispatch
+                Mnemonic::Jmp | Mnemonic::Ret => break, // terminal dispatch
+                Mnemonic::Call => {
+                    // Call-hidden cryptor (3.9.4): follow one level.
+                    if depth < 1 && ins.op_count() == 1 && ins.op0_kind() == OpKind::NearBranch64 {
+                        let tgt = ins.near_branch_target();
+                        if tgt != 0 && !visited.contains(&tgt) {
+                            worklist.push((tgt, depth + 1));
+                        }
+                    }
+                    break;
+                }
                 _ if ins.is_jcc_short_or_near() => {
                     let tgt = ins.near_branch_target();
-                    if tgt != 0 && !visited.contains(&tgt) { worklist.push(tgt); }
+                    if tgt != 0 && !visited.contains(&tgt) { worklist.push((tgt, depth)); }
                     // continue fall-through inline
                 }
                 Mnemonic::Xor | Mnemonic::Add | Mnemonic::Sub | Mnemonic::Rol | Mnemonic::Ror
@@ -122,6 +146,12 @@ pub fn mine_cryptor(site: &FetchSite, binary: &crate::pe_loader::PEBinary) -> Re
     Ok(MinedCryptor { site_va: site.va, cryptor, key_reg, steps })
 }
 
+/// File-backed mining (static bytes). For runtime-decrypted regions use
+/// [`mine_cryptor_with`] with a snapshot overlay reader.
+pub fn mine_cryptor(site: &FetchSite, binary: &crate::pe_loader::PEBinary) -> Result<MinedCryptor> {
+    mine_cryptor_with(site, &|va, n| binary.read_bytes(va, n).ok())
+}
+
 impl MinedCryptor {
     /// `opcode = cryptor.encrypt(raw ^ key)` — same contract as pure path.
     pub fn decode(&self, raw: u8, key: u8) -> u8 {
@@ -151,9 +181,60 @@ mod tests {
         mine_cryptor(&site, &bin).ok()
     }
 
+    /// Byte overlay reader over a (base, bytes) image for synthetic tests.
+    /// Returns whatever bytes are available (short reads OK — decoder
+    /// stops at the end, mirroring a mapped-region edge).
+    fn overlay_reader(image: &[(u64, Vec<u8>)]) -> impl Fn(u64, usize) -> Option<Vec<u8>> + '_ {
+        move |va, n| {
+            for (base, data) in image {
+                if va >= *base && (va - base) < data.len() as u64 {
+                    let o = (va - base) as usize;
+                    let end = (o + n).min(data.len());
+                    return Some(data[o..end].to_vec());
+                }
+            }
+            None
+        }
+    }
+
     #[test]
-    fn mines_rbx_family_matching_hardcoded() {
-        // Hardcoded oracle vectors from site_emulator tests.
+    fn follows_call_hidden_cryptor_one_level() {
+        // movzx eax,[rcx]; call next; [target:] xor al,bl; not al; ret.
+        let base = 0x1000u64;
+        let code: Vec<u8> = vec![
+            0x0F, 0xB6, 0x01, // movzx eax, byte [rcx]
+            0xE8, 0x00, 0x00, 0x00, 0x00, // call 0x1008
+            0x30, 0xD8, // xor al, bl
+            0xF6, 0xD0, // not al
+            0xC3, // ret
+        ];
+        let image = vec![(base, code)];
+        let site = FetchSite { va: base, base: Register::RCX, dst: Register::EAX, len: 3 };
+        let m = mine_cryptor_with(&site, &overlay_reader(&image)).unwrap();
+        assert_eq!(m.key_reg, "bl");
+        assert_eq!(m.steps, 1, "steps={}", m.steps);
+        // decode(raw,key) = not(raw ^ key)
+        assert_eq!(m.decode(0x3e, 0xf6), !(0x3e ^ 0xf6));
+    }
+
+    #[test]
+    fn mines_chain_start_site_without_fetch() {
+        // Site points directly at xor (no leading movzx): must not skip it.
+        let base = 0x2000u64;
+        let code: Vec<u8> = vec![
+            0x30, 0xD8, // xor al, bl
+            0xFE, 0xC0, // inc al
+            0xC3, // ret
+        ];
+        let image = vec![(base, code)];
+        let site = FetchSite { va: base, base: Register::RCX, dst: Register::EAX, len: 0 };
+        let m = mine_cryptor_with(&site, &overlay_reader(&image)).unwrap();
+        assert_eq!(m.key_reg, "bl");
+        assert_eq!(m.steps, 1);
+    }
+
+    #[test]
+    fn mines_rbx_family_matching_hardcoded() {        // Hardcoded oracle vectors from site_emulator tests.
         let Some(m) = mine_virt_all(0x1401989e9) else { return; };
         assert!(m.steps >= 3, "steps={}", m.steps);
         for (raw, key) in [(0x3eu8, 0xf6u8), (0x68, 0xe0), (0x20, 0x94)] {
