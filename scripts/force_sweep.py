@@ -46,6 +46,7 @@ def read(secs, va, n):
 def main():
     bdir, binary, outdir = sys.argv[1], sys.argv[2], sys.argv[3]
     topn = int(sys.argv[4]) if len(sys.argv) > 4 else 30
+    os.makedirs(outdir, exist_ok=True)
     raw = open(bdir + "/open_trace.bin", "rb").read()
     trs = struct.unpack("<%dQ" % (len(raw) // 8), raw)
     base = set(a for a in trs if 0x140000000 <= a < 0x142000000)
