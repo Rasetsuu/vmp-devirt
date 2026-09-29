@@ -9,3 +9,4 @@ pub mod llvm_pipeline;
 pub mod dataflow;
 pub mod merge;
 pub mod sensor;
+pub mod dispatch;

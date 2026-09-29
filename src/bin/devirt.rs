@@ -18,10 +18,11 @@ fn main() -> Result<()> {
         eprintln!("  devirt merge <trace...>         # union edges + divergence points (.bin u64LE)");
         eprintln!("  devirt map <op...>              # opcode -> handler type (hex bytes)");
         eprintln!("  devirt sense <trace> <memlog>  # behavior-ranked fetch candidates");
+        eprintln!("  devirt dispatch <trace.bin> <binary>  # indirect-jmp successor tables");
         std::process::exit(2);
     }
-    let bin = if ["merge", "map", "sense"].contains(&args[1].as_str()) {
-        // Merge/sense work on raw files; map needs no binary.
+    let bin = if ["merge", "map", "sense", "dispatch"].contains(&args[1].as_str()) {
+        // Merge/sense/dispatch work on raw files; map needs no binary.
         None
     } else {
         Some(PEBinary::load(&args[2]).with_context(|| format!("load {}", args[2]))?)
@@ -124,6 +125,65 @@ fn main() -> Result<()> {
                 println!("  {:#x} score={:.3} exec={} data={} span={:#x} rmw={}",
                     f.va, f.score, f.exec_count, f.data_reads, f.read_span, f.rmw);
             }
+        }
+        other if other == "dispatch" => {
+            if args.len() < 4 {
+                eprintln!("dispatch needs <trace.bin> <binary>");
+                std::process::exit(2);
+            }
+            use vmp_devirt::backend::dispatch::dispatch_tables;
+            let tb = std::fs::read(&args[2]).with_context(|| format!("read {}", args[2]))?;
+            let trace: Vec<u64> = tb.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+            let bin = PEBinary::load(&args[3]).with_context(|| format!("load {}", args[3]))?;
+            // Pre-decode unique VAs once (trace is millions of steps).
+            // Parse sections a single time; PEBinary::read_bytes re-parses
+            // the PE per call (too slow for 90k sites).
+            use std::collections::{BTreeSet, HashSet};
+            let pe = bin.parse_pe()?;
+            let image_base = bin.image_base().unwrap_or(0x140000000);
+            let mut sects = Vec::new();
+            for s in &pe.sections {
+                let start = image_base + s.virtual_address as u64;
+                let end = start + s.virtual_size.max(s.size_of_raw_data) as u64;
+                sects.push((start, end, s.pointer_to_raw_data as usize, s.virtual_address as usize));
+            }
+            let read_va = |va: u64, n: usize| -> Option<Vec<u8>> {
+                for (start, end, raw, _rva) in &sects {
+                    if va >= *start && va + n as u64 <= *end {
+                        let off = *raw + (va - *start) as usize;
+                        return bin.data.get(off..off + n).map(|b| b.to_vec());
+                    }
+                }
+                None
+            };
+            let uniq: BTreeSet<u64> = trace.iter().cloned().collect();
+            let mut indirect: HashSet<u64> = HashSet::new();
+            for va in uniq {
+                let bytes = match read_va(va, 6) {
+                    Some(b) => b,
+                    None => continue,
+                };
+                let mut d = iced_x86::Decoder::with_ip(64, &bytes, va, iced_x86::DecoderOptions::NONE);
+                let ins = d.decode();
+                if ins.mnemonic() == iced_x86::Mnemonic::Jmp
+                    && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
+                {
+                    indirect.insert(va);
+                }
+            }
+            let tables = dispatch_tables(&trace, &|va| indirect.contains(&va));
+            println!("indirect dispatch sites: {}", tables.len());
+            let mut multi = 0;
+            for (va, succ) in tables.iter().take(40) {
+                println!("  {:#x}: {} targets {}", va, succ.len(),
+                    succ.iter().take(6).map(|s| format!("{:#x}", s)).collect::<Vec<_>>().join(" | "));
+            }
+            for (_, succ) in tables.iter() {
+                if succ.len() > 1 {
+                    multi += 1;
+                }
+            }
+            println!("multi-target dispatchers (total): {}", multi);
         }
         other => {
             eprintln!("unknown command: {}", other);
