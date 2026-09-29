@@ -40,3 +40,21 @@ foreign watchlist barely fires. Per-mode mining is the follow-up.
 `devirt dispatch <trace.bin> <binary>` (see `src/backend/dispatch.rs`):
 add2 570 indirect sites (11-target max observed), sub2 515,
 Mutation 226.
+
+## Per-mode cryptor mining
+
+`devirt scan` detects vmp3-fdj on all four binaries (500+ strict sites
+each, capped at display). `devirt mine` on 40-site samples (static
+bytes; `mine` also accepts movsx — SMC flips B6↔BE):
+
+| Mode | Mined | Key regs | Max chain | Note |
+|---|---|---|---|---|
+| add2 (Virt) | 22/40 | r10l, dil, r11l | 4 steps | e.g. Ror→Dec→Not→Xor |
+| Mutation | 20/40 | sil, bl | 5 steps | sil-dominant, distinct keys |
+| Ultra | 28/40 | r10l, sil, dil, bpl | 8 steps | longest chains, mixed keys |
+| Virtualization | 29/40 | r9l, sil, r8l, r11l | 8 steps | r9l-dominant |
+
+Unmined sites (~30–50%) are call-hidden cryptors (`movzx; mov; call`,
+miner stops at `call`) — known 3.9.4-b2285 shape, queued as miner v2.
+Key-register sets differ per mode: per-mode mining is required, a
+single watchlist/cryptor does not transfer.
