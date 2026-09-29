@@ -19,10 +19,12 @@ fn main() -> Result<()> {
         eprintln!("  devirt map <op...>              # opcode -> handler type (hex bytes)");
         eprintln!("  devirt sense <trace> <memlog>  # behavior-ranked fetch candidates");
         eprintln!("  devirt dispatch <trace.bin> <binary>  # indirect-jmp successor tables");
+        eprintln!("  devirt mine-live <snapdir> <site-va>  # mine chain from snapshot overlay (live bytes)");
+        eprintln!("  devirt mine-hits <open_hits.json>     # mine all hit sites from hit-time code");
         std::process::exit(2);
     }
-    let bin = if ["merge", "map", "sense", "dispatch"].contains(&args[1].as_str()) {
-        // Merge/sense/dispatch work on raw files; map needs no binary.
+    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits"].contains(&args[1].as_str()) {
+        // Merge/sense/dispatch/mine-live/mine-hits work on raw files, not PEs.
         None
     } else {
         Some(PEBinary::load(&args[2]).with_context(|| format!("load {}", args[2]))?)
@@ -187,6 +189,121 @@ fn main() -> Result<()> {
                 }
             }
             println!("multi-target dispatchers (total): {}", multi);
+        }
+        other if other == "mine-live" => {
+            if args.len() < 4 {
+                eprintln!("mine-live needs <snapshot-dir> <site-va>");
+                std::process::exit(2);
+            }
+            use vmp_devirt::frontend::cryptor_miner::mine_cryptor_with;
+            let dir = &args[2];
+            let va = u64::from_str_radix(args[3].trim_start_matches("0x"), 16)?;
+            // Generic overlay: <dir>/open_bases.json maps mem-tag ->
+            // base; <dir>/open_mem_<tag>.bin carries bytes (any tag set,
+            // unlike the fixed-name load_snapshots helper).
+            let bmap: std::collections::HashMap<String, String> =
+                serde_json::from_str(&std::fs::read_to_string(format!("{}/open_bases.json", dir))?)?;
+            let mut sections: Vec<(u64, Vec<u8>)> = Vec::new();
+            for e in std::fs::read_dir(dir)? {
+                let e = e?;
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !name.starts_with("open_mem_") || !name.ends_with(".bin") {
+                    continue;
+                }
+                let tag = &name["open_mem_".len()..name.len() - ".bin".len()];
+                if let Some(base) = bmap.get(tag).and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok()) {
+                    sections.push((base, std::fs::read(e.path())?));
+                }
+            }
+            if sections.is_empty() {
+                anyhow::bail!("no snapshot sections in {}", dir);
+            }
+            let read = |va: u64, n: usize| -> Option<Vec<u8>> {
+                for (base, data) in &sections {
+                    if va >= *base && va - base + n as u64 <= data.len() as u64 {
+                        let o = (va - base) as usize;
+                        return Some(data[o..o + n].to_vec());
+                    }
+                }
+                None
+            };
+            let bytes = read(va, 16).with_context(|| format!("no snapshot bytes at {:#x}", va))?;
+            let mut d = iced_x86::Decoder::with_ip(64, &bytes, va, iced_x86::DecoderOptions::NONE);
+            let fetch = d.decode();
+            if fetch.mnemonic() != iced_x86::Mnemonic::Movzx
+                && fetch.mnemonic() != iced_x86::Mnemonic::Movsx
+            {
+                anyhow::bail!("{:#x} is not a movzx/movsx fetch site in overlay", va);
+            }
+            let site = FetchSite {
+                va,
+                base: fetch.memory_base(),
+                dst: fetch.op0_register(),
+                len: fetch.len(),
+            };
+            let m = mine_cryptor_with(&site, &read)?;
+            println!("site {:#x} key={} steps={} {:?}", va, m.key_reg, m.steps, m.cryptor.cmds);
+        }
+        other if other == "mine-hits" => {
+            if args.len() < 3 {
+                eprintln!("mine-hits needs <open_hits.json>");
+                std::process::exit(2);
+            }
+            use vmp_devirt::frontend::cryptor_miner::mine_cryptor_with;
+            let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&args[2])?)?;
+            // Distinct sites -> first hit's code bytes (hit-time live).
+            let mut sites: std::collections::BTreeMap<u64, Vec<u8>> = std::collections::BTreeMap::new();
+            if let Some(arr) = v.as_array() {
+                for x in arr {
+                    let va = match x.get("site").and_then(|s| s.as_str()).and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()) {
+                        Some(a) => a,
+                        None => continue,
+                    };
+                    if sites.contains_key(&va) {
+                        continue;
+                    }
+                    let code = match x.get("code").and_then(|s| s.as_str()) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    let bytes: Vec<u8> = (0..code.len()).step_by(2).filter_map(|i| u8::from_str_radix(&code[i..(i + 2).min(code.len())], 16).ok()).collect();
+                    if !bytes.is_empty() {
+                        sites.insert(va, bytes);
+                    }
+                }
+            }
+            let mut ok = 0usize;
+            for (va, code) in &sites {
+                let mut d = iced_x86::Decoder::with_ip(64, code, *va, iced_x86::DecoderOptions::NONE);
+                let fetch = d.decode();
+                if fetch.mnemonic() != iced_x86::Mnemonic::Movzx
+                    && fetch.mnemonic() != iced_x86::Mnemonic::Movsx
+                {
+                    continue;
+                }
+                let site = FetchSite {
+                    va: *va,
+                    base: fetch.memory_base(),
+                    dst: fetch.op0_register(),
+                    len: fetch.len(),
+                };
+                let read = |a: u64, n: usize| -> Option<Vec<u8>> {
+                    if a >= *va && a - va + n as u64 <= code.len() as u64 {
+                        let o = (a - va) as usize;
+                        Some(code[o..o + n].to_vec())
+                    } else {
+                        None
+                    }
+                };
+                match mine_cryptor_with(&site, &read) {
+                    Ok(m) => {
+                        ok += 1;
+                        println!("site {:#x} key={} steps={} {:?}", va, m.key_reg, m.steps, m.cryptor.cmds);
+                    }
+                    Err(_) => {}
+                }
+            }
+            println!("mined {}/{} hit sites", ok, sites.len());
         }
         other => {
             eprintln!("unknown command: {}", other);
