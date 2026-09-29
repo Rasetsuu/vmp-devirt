@@ -65,6 +65,18 @@ relational search finds causes: **`rsi>rbp` at 1.0000 for
 idea 2 forcing. Only 2/1258 watch sites diverge enough to learn
 (rest single-path in this corpus — the coverage wall, quantified).
 
+## Forcing (idea 2 v1)
+
+`force_edge` (`vmp_devirt_prod` `6fb9a40`: same Unicorn setup as the
+tracer plus RIP override at a force site, pre-force regs logged).
+Forcing `0x1410cc2be`→fall-through every visit fires 22x, reroutes to
+`end=0x140e9dec9` in 20k steps — mechanics proven. Forced-only
+coverage: **0**, the fall path being already observed 26x naturally.
+Lesson: forcing observed edges reroutes but adds no code; v2 must
+enumerate *single-path* jcc sites and force their structural
+alternative (disasm-derived fall-through/target). That's the coverage
+engine; v1 built its motor.
+
 ## Per-mode cryptor mining
 
 `devirt scan` detects vmp3-fdj on all four binaries (500+ strict sites
