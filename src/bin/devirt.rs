@@ -16,10 +16,12 @@ fn main() -> Result<()> {
         eprintln!("  devirt scan <binary>            # detect version + list fetch/handler addrs");
         eprintln!("  devirt mine <binary> <site-va>  # mine cryptor chain at a fetch site");
         eprintln!("  devirt merge <trace...>         # union edges + divergence points (.bin u64LE)");
+        eprintln!("  devirt map <op...>              # opcode -> handler type (hex bytes)");
+        eprintln!("  devirt sense <trace> <memlog>  # behavior-ranked fetch candidates");
         std::process::exit(2);
     }
-    let bin = if args[1].as_str() == "merge" {
-        // Merge works on raw trace files; load a dummy later per-branch.
+    let bin = if ["merge", "map", "sense"].contains(&args[1].as_str()) {
+        // Merge/sense work on raw files; map needs no binary.
         None
     } else {
         Some(PEBinary::load(&args[2]).with_context(|| format!("load {}", args[2]))?)
@@ -31,7 +33,7 @@ fn main() -> Result<()> {
                 let applies = f.detect(&bin).unwrap_or(false);
                 println!("frontend {:<10} applies={}", f.name(), applies);
                 if applies {
-                    for h in f.handler_addrs(&bin, &[]).unwrap_or_default().iter().take(20) {
+                    for h in f.handler_addrs(&bin, &[]).unwrap_or_default().iter().take(500) {
                         println!("  handler candidate {:#x}", h);
                     }
                 }
@@ -80,6 +82,47 @@ fn main() -> Result<()> {
             println!("traces={} edges={} divergence_points={}", traces.len(), edges.len(), div.len());
             for (a, succ) in div.iter().take(30) {
                 println!("  vbraddr {:#x}: {}", a, succ.iter().map(|s| format!("{:#x}", s)).collect::<Vec<_>>().join(" | "));
+            }
+        }
+        other if other == "map" => {
+            use vmp_devirt::opcode_map::CanonicalOpcodeMap;
+            for a in &args[2..] {
+                let op = u8::from_str_radix(a.trim_start_matches("0x"), 16)?;
+                let e = CanonicalOpcodeMap::lookup(op);
+                println!("{:#04x} -> {:?} ({})", op, e.handler_type, e.semantic);
+            }
+        }
+        other if other == "sense" => {
+            if args.len() < 4 {
+                eprintln!("sense needs <trace.bin> <memlog.bin>");
+                std::process::exit(2);
+            }
+            use vmp_devirt::backend::sensor::sense;
+            let tb = std::fs::read(&args[2]).with_context(|| format!("read {}", args[2]))?;
+            let trace: Vec<u64> = tb.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+            let mb = std::fs::read(&args[3]).with_context(|| format!("read {}", args[3]))?;
+            const REC: usize = 33;
+            let mut reads = Vec::new();
+            let mut writes = Vec::new();
+            for c in mb.chunks_exact(REC) {
+                let rip = u64::from_le_bytes(c[0..8].try_into().unwrap());
+                let w = c[8] == 1;
+                let addr = u64::from_le_bytes(c[9..17].try_into().unwrap());
+                if rip < 0x900000 {
+                    continue;
+                }
+                if w { writes.push((rip, addr)); } else { reads.push((rip, addr)); }
+            }
+            // Stack: high scratch pages. NOTE: every memlog access is data
+            // (instruction fetches never hit MEM hooks), so image-range
+            // pool reads count — only the VM stack is excluded as noise.
+            let is_stack = |a: u64| (a & 0xFFF00000) == 0x7FF00000;
+            let is_code = |_a: u64| false;
+            let ranked = sense(&trace, &reads, &writes, &is_stack, &is_code);
+            println!("ranked {} blocks", ranked.len());
+            for f in ranked.iter().take(25) {
+                println!("  {:#x} score={:.3} exec={} data={} span={:#x} rmw={}",
+                    f.va, f.score, f.exec_count, f.data_reads, f.read_span, f.rmw);
             }
         }
         other => {

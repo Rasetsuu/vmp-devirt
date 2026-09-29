@@ -8,3 +8,4 @@ pub mod lifter;
 pub mod llvm_pipeline;
 pub mod dataflow;
 pub mod merge;
+pub mod sensor;
