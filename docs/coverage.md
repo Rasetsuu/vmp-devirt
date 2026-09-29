@@ -87,8 +87,14 @@ Unguarded: **546** forced-only addrs (~411 genuine untaken-path code,
 ~135 derailment scribble from 2 escaped runs, 2/30 stale-SMC 0-force).
 Guarded re-run (`KNOWN_BIN`/`DERAIL_MAX=128`): **489**, derailers
 truncated early (e.g. `jp` 2M steps→stopped at guard trip).
-Derailment is nondeterministic scribble run-to-run (63 vs 1.6M same
-command) — the guard keeps the deterministic prefix and drops chaos.
+Rest-sweep (sites 30–150): **1747**, union with top-30 = **2293**
+(overlap 0 — disjoint sites yield disjoint code, genuine untaken
+paths, not shared derailment). Promotion closed the loop: 9 static
+fetch candidates in new code, **7/9 mine** (`dil`/`r11l` families,
+one 6-step Neg→Not→Ror→Xor→Inc→Xor) — forced code becomes mined
+chains without new rules. Derailment is nondeterministic scribble
+run-to-run (63 vs 1.6M same command) — the guard keeps the
+deterministic prefix and drops chaos.
 Promotion scan found **0** fetch sites in new code: final-dump bytes
 are the wrong source (SMC re-encrypted). Answered by live capture:
 `force_edge` now records 256B at each force target into
