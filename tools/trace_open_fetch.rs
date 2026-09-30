@@ -122,7 +122,8 @@ fn main() -> anyhow::Result<()> {
                     if *off < end { let _ = emu.mem_write(*va, &bin.data[*off..end]); }
                 }
             }
-            for b in (0x100000u64..0x80000000u64).step_by(0x100000) { let _ = emu.mem_map(b, 0x100000, Prot::ALL); }
+            let sparse_hi: u64 = std::env::var("SPARSE_HI").map(|v| u64::from_str_radix(v.trim().trim_start_matches("0x"), 16).unwrap_or(0x80000000)).unwrap_or(0x80000000);
+            for b in (0x100000u64..sparse_hi).step_by(0x100000) { let _ = emu.mem_map(b, 0x100000, Prot::ALL); }
             // Zero page with `ret`: unbound IAT calls (target 0) return cleanly.
             let _ = emu.mem_map(0, 0x1000, Prot::ALL);
             let _ = emu.mem_write(0, &[0xC3u8]);
@@ -178,16 +179,31 @@ fn main() -> anyhow::Result<()> {
                                 eprintln!("  IAT {} -> {:#x}", name, tgt);
                             }
                         }
-                        for (name, val, a) in const_jobs {
+                        for (name, val, a) in &const_jobs {
                             let mut code = vec![0x48u8, 0xB8];
                             code.extend_from_slice(&val.to_le_bytes());
                             code.push(0xC3);
-                            let _ = emu.mem_write(a, &code);
-                            if let Some(slot) = get(&name) {
+                            let _ = emu.mem_write(*a, &code);
+                            if let Some(slot) = get(name) {
                                 let _ = emu.mem_write(slot, &a.to_le_bytes());
                                 eprintln!("  IAT {} -> const {:#x}", name, val);
                             }
                         }
+                        // Fallback: every other known slot returns 0 (documented
+                        // harness lie; beats call-into-void). Heap-ish names get
+                        // heap so callers can dereference the result.
+                        let mut nfb = 0;
+                        for (name, vs) in map.iter() {
+                            let handled = rules.iter().any(|(r, _)| r == name)
+                                || const_jobs.iter().any(|(n, _, _)| n == name);
+                            if handled { continue; }
+                            if let Ok(slot) = u64::from_str_radix(vs.trim().trim_start_matches("0x"), 16) {
+                                let heapish = ["Alloc", "Heap", "Virtual", "malloc", "Global", "Local", "MapView"].iter().any(|k| name.contains(k));
+                                let _ = emu.mem_write(slot, &(if heapish { stub_heap } else { stub_zero }).to_le_bytes());
+                                nfb += 1;
+                            }
+                        }
+                        if nfb > 0 { eprintln!("  IAT fallback zero/heap: {} slots", nfb); }
                     }
                 }
                 eprintln!("  IAT stubbed: LocalAlloc->heap {:#x}", heap_base);

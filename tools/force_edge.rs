@@ -53,7 +53,8 @@ fn main() -> anyhow::Result<()> {
             if *off < end { let _ = emu.mem_write(*va, &bin.data[*off..end]); }
         }
     }
-    for b in (0x100000u64..0x80000000u64).step_by(0x100000) { let _ = emu.mem_map(b, 0x100000, Prot::ALL); }
+    let sparse_hi: u64 = std::env::var("SPARSE_HI").map(|v| u64::from_str_radix(v.trim().trim_start_matches("0x"), 16).unwrap_or(0x80000000)).unwrap_or(0x80000000);
+            for b in (0x100000u64..sparse_hi).step_by(0x100000) { let _ = emu.mem_map(b, 0x100000, Prot::ALL); }
     let _ = emu.mem_map(0, 0x1000, Prot::ALL);
     let _ = emu.mem_write(0, &[0xC3u8]);
     // Import stubs (same as tracer; Open.exe slots harmless elsewhere).
