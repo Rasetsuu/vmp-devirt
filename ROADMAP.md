@@ -73,11 +73,13 @@ proof first, automation second, research arcs last.
 
 ### 3.3 Second target family [STARTED, blocked]
 - 3.8.1 research binary fetched (VEXA tests dir) to data/vmp381.
-  `scan` detects vmp3-fdj; trace dies at an RVA jump to `0xd536`
-  (37 uniq). IAT fallback stubs (47 slots) + SPARSE_HI changed
-  nothing — hypotheses: PEB-based image base (`fs` reads 0 under
-  emulation) or import-dependent dispatch. Needs a PEB/TEB harness
-  (FS-base control) or RVA-alias mapping. Themida: zero work.
+  `scan` detects vmp3-fdj; trace died at an RVA jump to `0xd536`.
+  ALIAS_RVA mapping added (lands + executes, +2 uniq) but the target
+  is `.idata` garbage — the RVA itself is state-dependent (likely
+  import-return-dependent dispatch: our stubs return 0/heap-const
+  where Windows returns live pointers). Next: import-fidelity stubs
+  (bump allocator, real-ish TEB/PEB) or FS-base control. Parked.
+  Themida: zero work.
 
 ## Non-goals (standing)
 Cheat creation/porting/operation, private servers, running bots,
