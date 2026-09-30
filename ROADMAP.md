@@ -58,10 +58,14 @@ proof first, automation second, research arcs last.
 
 ## Phase 3 — Research arcs (unstarted)
 
-### 3.1 Key-schedule recovery (idea 1, master key)
-- Goal: reverse the rolling-key schedule so unexecuted bytecode
-  decrypts statically — converts the coverage wall into a static
-  problem. Highest leverage, hardest. Needs cryptor corpus (have).
+### 3.1 Key-schedule recovery (idea 1, master key) [v1 FALSIFIED, reframed]
+- v1 (visit-order sequences) dead: key reg takes 90 distinct values
+  over 2357 visits, aperiodic — clobbered by other handlers between
+  visits, so no per-site visit-index schedule exists.
+- Correct frame is taint: key bytes derive from pool/stack slots via
+  load chains (miner captures the loads); track sources + update
+  functions with Triton taint through handler blocks. Queued behind
+  synth oracle work (same I/O pairs).
 
 ### 3.2 v1/v2 frontend depth (parked by owner)
 - Thin scanners exist; needs the trace treatment 3.x got.
