@@ -143,7 +143,7 @@ int main(int argc, char **argv) {
   uint64_t stepno = 0;
   uint64_t dump_at = 0;
   if (const char *e = getenv("LEG_DUMP")) dump_at = strtoull(e, nullptr, 0);
-  for (; steps < bound; steps++, stepno++) {
+  for (; steps < bound; steps = steps + 1, stepno++) {
     g_step = stepno;
     auto it = m.find(pc);
     if (it == m.end()) { missing = pc; break; }

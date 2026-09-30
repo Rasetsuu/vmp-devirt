@@ -60,15 +60,22 @@ heap, staged).
   unreliable across llc frames), unbuffered crash-safe logs,
   BB coverage of ret/indirect successors + cap-cut continuations.
 
-## Recompilability (factory port)
+## Recompilability (factory port + runnable proof)
 
-`recompile` generalized (`FETCH_VA` env, generic snapshot loader —
-was Open.exe-hardcoded + fixed section names): add2 segment between
-`0x140eb8c73` visits = 74065 blocks / 3874 unique, **3325 → .o via
-Remill + opt -O3 + llc (86%), `ld -r` links `seg1.o` (3.8MB)**.
-Loop needs >500s for full coverage (timeout killed at 86%; link
-verified manually). Runnable-driver + ABI stitching still open —
-objects compose, execution not yet replayed.
+Lift: add2 BBs, **7012/7012 objects** via Remill + `opt -O3` + `llc`,
+`ld -r` links with 0 stubs needed (2 fault-guarded blocks kept for
+their faithful div-fault paths).
+Re-execution (`tools/replay/`): handmade runtime + driver, 17–34k
+blocks per run to program end (`rip=0`, matching baseline's own end).
+End-state equivalence vs Unicorn oracle: identical regs, identical
+image/pool/heap/staged, stack equal **except 7 wall-clock bytes in
+2 regions** (TSC-store slot + one timing-shaped word) out of 1MB+.
+The rebuilt program computes the same thing through the same paths;
+remaining gap to a standalone binary is packaging (IAT stubs for
+imports on paths beyond solo_add), not semantics.
+
+Superseded: segment-span `recompile` (`seg1.o`, 86%) — replaced by
+the BB pipeline above plus replay fidelity.
 
 ## Dispatch tables + handler extents (VMPredator §III transplant)
 
