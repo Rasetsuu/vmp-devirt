@@ -6,7 +6,7 @@ proof first, automation second, research arcs last.
 
 ## Phase 1 — Proof closure (active)
 
-### 1.1 Runnable rebuilt binary [OPEN, biggest proof left]
+### 1.1 Runnable rebuilt binary [PROVEN modulo wall-clock]
 - Depends: lifted objects (done, 7012/7012), branch conditions (done),
   dispatch tables (done).
 - Work: ABI stitching — entry driver initializing Remill State from a
