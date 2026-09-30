@@ -16,7 +16,11 @@ pub struct MinedCryptor {
     pub site_va: u64,
     pub cryptor: ValueCryptor,
     /// Key register name (e.g. "bpl"), empty if xor-with-imm chain.
+    /// And-mix schedules append '&' plus the co-byte source is recorded
+    /// separately (e.g. key "r9b&" with aux_src "rsi+2").
     pub key_reg: String,
+    /// Co-byte load source for and-mix schedules ("base+disp"), if found.
+    pub aux_src: Option<String>,
     /// Number of chain ops mined (excluding the key-mix xor).
     pub steps: usize,
 }
@@ -67,6 +71,9 @@ pub fn mine_cryptor_with(
     let mut found_key_mix = false;
     let mut visited: HashSet<u64> = HashSet::new();
     // (ip, call_depth): follow direct calls once (call-hidden cryptors).
+    // loads: last mem-load source per destination reg name (co-bytes).
+    let mut loads: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut aux_src: Option<String> = None;
     let mut worklist = vec![(site.va, 0u8)];
     let mut total = 0usize;
     while let Some((mut ip, depth)) = worklist.pop() {
@@ -106,6 +113,27 @@ pub fn mine_cryptor_with(
                     }
                     break;
                 }
+                // Track byte/word loads per destination reg: co-byte
+                // sources for and-mix schedules (e.g. mov r9b,[rsi+2]).
+                Mnemonic::Mov | Mnemonic::Movzx | Mnemonic::Movsx => {
+                    if ins.op_count() == 2 && ins.op0_kind() == OpKind::Register
+                        && ins.op1_kind() == OpKind::Memory
+                    {
+                        let base = ins.memory_base();
+                        let disp = ins.memory_displacement64() as i64;
+                        let idx = ins.memory_index();
+                        if base != Register::None && base != Register::RIP {
+                            let src = if idx != Register::None {
+                                format!("{:?}+{:?}*{} {:+}",
+                                        base, idx, ins.memory_index_scale(),
+                                        disp).to_lowercase()
+                            } else {
+                                format!("{:?} {:+}", base, disp).to_lowercase()
+                            };
+                            loads.insert(reg_name(ins.op0_register()), src);
+                        }
+                    }
+                }
                 _ if ins.is_jcc_short_or_near() => {
                     let tgt = ins.near_branch_target();
                     if tgt != 0 && !visited.contains(&tgt) { worklist.push((tgt, depth)); }
@@ -122,9 +150,12 @@ pub fn mine_cryptor_with(
                         }
                         // And-mix schedules (e.g. NOR `~B0 & ~B1`): second
                         // register is a co-key, not the classic xor key.
+                        // Record its load source for co-byte decode.
                         Mnemonic::And if ins.op_count() == 2 && ins.op1_kind() == OpKind::Register => {
+                            let co = reg_name(ins.op1_register());
                             if key_reg.is_empty() {
-                                key_reg = format!("{}&", reg_name(ins.op1_register()));
+                                key_reg = format!("{}&", co);
+                                aux_src = loads.get(&co).cloned();
                             }
                             found_key_mix = true;
                         }
@@ -152,7 +183,7 @@ pub fn mine_cryptor_with(
     }
     // steps==0 with key mix found = identity cryptor (opcode = raw ^ key),
     // e.g. RBX-family `movzx edx,[rbx] ... xor dl,bpl; jmp`.
-    Ok(MinedCryptor { site_va: site.va, cryptor, key_reg, steps })
+    Ok(MinedCryptor { site_va: site.va, cryptor, key_reg, aux_src, steps })
 }
 
 /// File-backed mining (static bytes). For runtime-decrypted regions use

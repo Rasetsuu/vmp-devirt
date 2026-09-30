@@ -15,11 +15,12 @@ vas = re.findall(r"handler candidate (0x[0-9a-f]+)", scan.stdout)[:N]
 chains = {}
 for va in vas:
     r = subprocess.run([DEVIRT, "mine", BIN, va], capture_output=True, text=True, timeout=120)
-    m = re.match(r"site (0x[0-9a-f]+) key=(\S*) steps=(\d+) \[(.*)\]", r.stdout.strip())
+    m = re.match(r"site (0x[0-9a-f]+) key=(\S*) aux=(\S+|None) steps=(\d+) \[(.*)\]", r.stdout.strip())
     if not m:
         continue
-    cmds = re.findall(r"op: (\w+), size: \w+, value: (\d+)", m.group(4))
-    chains[m.group(1)] = {"key": m.group(2), "steps": int(m.group(3)),
+    cmds = re.findall(r"op: (\w+), size: \w+, value: (\d+)", m.group(5))
+    chains[m.group(1)] = {"key": m.group(2), "aux": None if m.group(3) == "None" else m.group(3),
+                          "steps": int(m.group(4)),
                           "cmds": [(op, int(v)) for op, v in cmds]}
 json.dump(chains, open(OUT, "w"), indent=1)
 print("mined %d/%d -> %s" % (len(chains), len(vas), OUT))

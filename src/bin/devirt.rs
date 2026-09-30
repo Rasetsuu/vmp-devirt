@@ -72,7 +72,7 @@ fn main() -> Result<()> {
                 len: movzx.len(),
             };
             let m = mine_cryptor(&site, &bin)?;
-            println!("site {:#x} key={} steps={} {:?}", va, m.key_reg, m.steps, m.cryptor.cmds);
+            println!("site {:#x} key={} aux={:?} steps={} {:?}", va, m.key_reg, m.aux_src, m.steps, m.cryptor.cmds);
         }
         other if other == "merge" => {
             if args.len() < 4 {
@@ -244,7 +244,7 @@ fn main() -> Result<()> {
                 len: fetch.len(),
             };
             let m = mine_cryptor_with(&site, &read)?;
-            println!("site {:#x} key={} steps={} {:?}", va, m.key_reg, m.steps, m.cryptor.cmds);
+            println!("site {:#x} key={} aux={:?} steps={} {:?}", va, m.key_reg, m.aux_src, m.steps, m.cryptor.cmds);
         }
         other if other == "mine-hits" => {
             if args.len() < 3 {
@@ -305,7 +305,7 @@ fn main() -> Result<()> {
                 match mine_cryptor_with(&site, &read) {
                     Ok(m) => {
                         ok += 1;
-                        println!("site {:#x} key={} steps={} {:?}", va, m.key_reg, m.steps, m.cryptor.cmds);
+                        println!("site {:#x} key={} aux={:?} steps={} {:?}", va, m.key_reg, m.aux_src, m.steps, m.cryptor.cmds);
                     }
                     Err(_) => {}
                 }
