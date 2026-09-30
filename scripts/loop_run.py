@@ -31,12 +31,19 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     report = {"baseline": bdir, "binary": binary, "topn": topn, "offset": off}
 
-    # 0. learn (optional corpus) — flip regions reported, not yet ordering
+    # 0. learn (optional corpus) -> rules JSON in report. NOTE: learned
+    # (divergent) sites are never sweep (single-path) candidates, so
+    # rules don't reorder the sweep; their real handoff is state
+    # perturbation (flip-inputs for idea-2 reruns), which is queued.
     if learn:
-        r = run([sys.executable, HERE + "/learn_dispatch.py", learn, "3"],
-                timeout=900)
-        report["learn_tail"] = r.stdout[-2000:] if r.stdout else ""
+        r = run([sys.executable, HERE + "/learn_dispatch.py", learn, "3",
+                 outdir + "/rules.json"], timeout=900)
         print("learn done")
+        try:
+            rules = json.load(open(outdir + "/rules.json"))
+            report["rules"] = {k: v["rule"] for k, v in rules.items()}
+        except Exception as e:
+            print("learn report skipped:", e)
 
     # 1. sweep
     r = run([sys.executable, HERE + "/force_sweep.py", bdir, binary, outdir, topn, off],

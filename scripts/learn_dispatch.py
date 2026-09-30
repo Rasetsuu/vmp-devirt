@@ -7,8 +7,9 @@ Output is interpretable (prints rsi > rbp-style rules) and generative
 (the rule's flip region feeds idea 2 forcing). Generalizes
 branch_solve.py (hand flag-writer search) to learned rules.
 
-Usage: learn_dispatch.py [data-dir] [max-depth]
+Usage: learn_dispatch.py [data-dir] [max-depth] [out.json]
 Corpus: <dir>/open_hits.json + <dir>/open_trace.bin (gadd_br).
+With out.json: writes {site: {rule, acc, base}} for learned sites.
 """
 import json
 import os
@@ -37,6 +38,7 @@ def main():
         by_site[x["site"]].append(x)
     print("sites=%d hits=%d" % (len(by_site), len(h)))
     learned = 0
+    rules = {}
     for site, rows in sorted(by_site.items(), key=lambda kv: -len(kv[1])):
         va = int(site, 16)
         occ = pos.get(va, [])
@@ -81,10 +83,16 @@ def main():
         scored.sort(reverse=True)
         print("  top relational: %s" %
               ", ".join("%s=%.4f" % (nm, s) for s, nm in scored[:4]))
+        if scored and scored[0][0] >= 0.99:
+            rules[site] = {"rule": scored[0][1], "acc": round(scored[0][0], 4),
+                           "base": top, "visits": len(X)}
         learned += 1
         if learned >= 10:
             break
     print("learned %d divergent sites" % learned)
+    if len(sys.argv) > 3:
+        json.dump(rules, open(sys.argv[3], "w"), indent=1)
+        print("wrote %d rules -> %s" % (len(rules), sys.argv[3]))
 
 
 main()
