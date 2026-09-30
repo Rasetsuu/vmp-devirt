@@ -33,7 +33,7 @@ proof first, automation second, research arcs last.
 
 ## Phase 2 — Automation (queued)
 
-### 2.1 Handler-body synth v1 [UNBUILT]
+### 2.1 Handler-body synth v1 [CORE BUILT, oracle hook queued]
 - Depends: handler extents + I/O pairs (have both: dispatch tables,
   hits regs, memlog).
 - Work: `backend/synth.rs` — enumerative search over the 8-op chain
