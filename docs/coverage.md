@@ -37,28 +37,28 @@ foreign watchlist barely fires. Per-mode mining is the follow-up.
 
 ## Replay fidelity (lifted 3.9.4 re-execution)
 
-`recomp/drv/` (research data, not repo): handmade Remill runtime
-(first-arg-is-answer flags from remill's `FLAGS.cpp`, direct-map
-memory, throw-trampolines for all CF intrinsics) + replay driver
-(BB dispatch, `rflag.flat=0x202` seed — remill's `SerializeFlags`
-leaves `_if`/`must_be_1` untouched) + lockstep differential
-(`py_bb_diff2.py`: Unicorn driven to each replay pc, regs + stack
-hash compared).
-- **16896/16896 legs match** (regs + 32KB stack window), incl. loop
-  iterations and flag branches. Path is a baseline subsequence.
-- **Open item: loop-count divergence.** Replay exits the 5-block VM
-  loop after ~5 iterations (edge 39 → `0x14107a53d`); baseline does
-  884. Same exit edge, 879 iterations early — exit-condition data
-  divergence, cause undetermined (counter lives in image-pool memory
-  outside the hashed window). Downstream effect: crash block reached
-  in a different loop phase (`[rsi]` 0x60 vs 0x1ab2cf95 → `gs` read
-  faults). Next: pinpoint the exit branch's data inputs.
-- Metrics lessons: edge-prefix comparison confounded by cap-cut
-  boundaries (sequential continuations across artificial splits look
-  like divergences) and direct-call inlining (invisible edges);
-  `src` edge field is uninformative (remill pre-sets PC — use
-  step→dispatch-pc mapping instead). Legs + subsequence are the
-  honest metrics.
+`tools/replay/` + lockstep `py_bb_diff2.py`: Remill-lifted BBs
+re-executed natively with a handmade runtime, Unicorn-driven to each
+replay pc comparing regs + 4 memory regions (stack page, image pool,
+heap, staged).
+- **Final: identical except 4 wall-clock bytes.** Across full runs
+  (17-34k blocks to program return at rip=0), the ONLY divergence
+  anywhere is the `rdtsc` store slot (`mov [rsi-4],eax`):
+  4 differing bytes in 1MB+12KB hashed, timestamp-shaped on both
+  sides. Everything else — regs, stack, pool, heap, staged — matches
+  at every leg.
+- Retracted: the "loop-count divergence" (5 vs 884) compared replay's
+  covered prefix against the whole 6.7M-step baseline; within the
+  prefix both do 5. Same for several "divergence" alarms that turned
+  out to be reader bugs (16B stride on 24B edge records), doubled
+  step counters, stale binaries (format magic now enforced), and
+  cross-run file contamination (run-id dirs now).
+- Environment gaps closed along the way: zero-page mapping
+  (`mmap_min_addr` -> low-page buffer), `rflag.flat=0x202` seed
+  (remill's `SerializeFlags` leaves `_if`/`must_be_1` untouched),
+  host rdtsc/cpuid hypercalls, throw-trampolines via setjmp (C++ EH
+  unreliable across llc frames), unbuffered crash-safe logs,
+  BB coverage of ret/indirect successors + cap-cut continuations.
 
 ## Recompilability (factory port)
 
