@@ -9,15 +9,19 @@
 //! xor, rotates, not/neg, bswap, inc/dec), verified against traced
 //! fetch bytes (`mine-hits` cross-checks).
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// One chain operation. Semantics follow the x86 instruction of the
-/// same name at the chain's operand width.
+/// same name at the chain's operand width. And is one-way for
+/// key-mixes (e.g. NOR schedules `~B0 & ~B1` need both bytes to
+/// invert); chains containing it report shape, not decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CryptOp {
     Add,
     Sub,
     Xor,
+    And,
     Inc,
     Dec,
     Bswap,
@@ -68,20 +72,29 @@ pub struct ValueCommand {
 
 impl ValueCommand {
     /// Decryption runs every step's inverse in reverse order.
-    fn inverse(&self) -> CryptOp {
+    /// And has no inverse (one-way mix); decrypting an And-chain
+    /// is an error the caller must handle (needs the co-byte).
+    fn inverse(&self) -> Option<CryptOp> {
         match self.op {
-            CryptOp::Add => CryptOp::Sub,
-            CryptOp::Sub => CryptOp::Add,
-            CryptOp::Inc => CryptOp::Dec,
-            CryptOp::Dec => CryptOp::Inc,
-            CryptOp::Rol => CryptOp::Ror,
-            CryptOp::Ror => CryptOp::Rol,
-            o => o,
+            CryptOp::Add => Some(CryptOp::Sub),
+            CryptOp::Sub => Some(CryptOp::Add),
+            CryptOp::Inc => Some(CryptOp::Dec),
+            CryptOp::Dec => Some(CryptOp::Inc),
+            CryptOp::Rol => Some(CryptOp::Ror),
+            CryptOp::Ror => Some(CryptOp::Rol),
+            CryptOp::And => None,
+            o => Some(o),
         }
     }
 
-    fn apply(&self, mut v: u64, decrypt: bool) -> u64 {
-        let op = if decrypt { self.inverse() } else { self.op };
+    fn apply(&self, mut v: u64, decrypt: bool) -> Result<u64> {
+        let op = if decrypt {
+            self.inverse().ok_or_else(|| {
+                anyhow::anyhow!("And-chain has no inverse (needs co-byte)")
+            })?
+        } else {
+            self.op
+        };
         let mask = self.size.mask();
         let bits = self.size.bits();
         let imm = self.value & mask;
@@ -94,6 +107,7 @@ impl ValueCommand {
                 v.wrapping_sub(if op == CryptOp::Dec { 1 } else { imm }) & mask
             }
             CryptOp::Xor => (v ^ imm) & mask,
+            CryptOp::And => (v & imm) & mask,
             CryptOp::Not => (!v) & mask,
             CryptOp::Neg => (0u64.wrapping_sub(v)) & mask,
             CryptOp::Bswap => match self.size {
@@ -111,13 +125,14 @@ impl ValueCommand {
                 if r == 0 { v } else { ((v >> r) | (v << (bits - r))) & mask }
             }
         };
-        res & mask
+        Ok(res & mask)
     }
 
     pub fn encrypt(&self, v: u64) -> u64 {
-        self.apply(v, false)
+        // Forward application is infallible (inverse() only runs on decrypt).
+        self.apply(v, false).unwrap_or(v & self.size.mask())
     }
-    pub fn decrypt(&self, v: u64) -> u64 {
+    pub fn decrypt(&self, v: u64) -> Result<u64> {
         self.apply(v, true)
     }
 }
@@ -143,22 +158,25 @@ impl ValueCryptor {
         // byte (x86 semantics: amount mod width).
         let v = match op {
             CryptOp::Rol | CryptOp::Ror => value & 0xFF,
-            CryptOp::Add | CryptOp::Sub | CryptOp::Xor => value & self.size.mask(),
+            CryptOp::Add | CryptOp::Sub | CryptOp::Xor | CryptOp::And => {
+                value & self.size.mask()
+            }
             _ => 0,
         };
         self.cmds.push(ValueCommand { op, size: self.size, value: v });
     }
     pub fn encrypt(&self, mut v: u64) -> u64 {
         for c in &self.cmds {
-            v = c.apply(v, false);
+            v = c.apply(v, false).unwrap_or(v & self.size.mask());
         }
         v & self.size.mask()
     }
-    pub fn decrypt(&self, mut v: u64) -> u64 {
+    /// Inverse chain; errors on one-way mixes (And needs the co-byte).
+    pub fn decrypt(&self, mut v: u64) -> Result<u64> {
         for c in self.cmds.iter().rev() {
-            v = c.apply(v, true);
+            v = c.apply(v, true)?;
         }
-        v & self.size.mask()
+        Ok(v & self.size.mask())
     }
 }
 
@@ -174,7 +192,7 @@ mod tests {
         cr.add(CryptOp::Add, 0x0f);
         for b in 0..=255u64 {
             let e = cr.encrypt(b);
-            let d = cr.decrypt(e);
+            let d = cr.decrypt(e).unwrap();
             assert_eq!(d, b, "b={b:#x} e={e:#x} d={d:#x}");
         }
     }
@@ -193,7 +211,7 @@ mod tests {
         let x = raw ^ key;
         let enc = cr.encrypt(x);
         assert_eq!(enc, 0xa0);
-        assert_eq!(cr.decrypt(enc), x);
+        assert_eq!(cr.decrypt(enc).unwrap(), x);
     }
 
     #[test]
@@ -201,7 +219,7 @@ mod tests {
         let mut cr = ValueCryptor::new(CryptSize::DWord);
         cr.add(CryptOp::Bswap, 0);
         assert_eq!(cr.encrypt(0x11223344), 0x44332211);
-        assert_eq!(cr.decrypt(0x44332211), 0x11223344);
+        assert_eq!(cr.decrypt(0x44332211).unwrap(), 0x11223344);
     }
 
     #[test]
@@ -209,13 +227,13 @@ mod tests {
         // Rotation applies at operand width (amount stays a byte).
         let mut cr32 = ValueCryptor::new(CryptSize::DWord);
         cr32.add(CryptOp::Rol, 8);
-        assert_eq!(cr32.cmds[0].apply(0x11223344, false), 0x22334411);
+        assert_eq!(cr32.cmds[0].apply(0x11223344, false).unwrap(), 0x22334411);
         let mut cr64 = ValueCryptor::new(CryptSize::QWord);
         cr64.add(CryptOp::Ror, 8);
-        assert_eq!(cr64.cmds[0].apply(0x1122334455667788, false), 0x8811223344556677);
+        assert_eq!(cr64.cmds[0].apply(0x1122334455667788, false).unwrap(), 0x8811223344556677);
         let mut cr16 = ValueCryptor::new(CryptSize::Word);
         cr16.add(CryptOp::Rol, 4);
-        assert_eq!(cr16.cmds[0].apply(0x1234, false), 0x2341);
+        assert_eq!(cr16.cmds[0].apply(0x1234, false).unwrap(), 0x2341);
         // roundtrips at every width (byte-facing entry points)
         for (sz, v) in [(CryptSize::Byte, 0xabu64),
                         (CryptSize::Word, 0xabcd),
@@ -224,9 +242,21 @@ mod tests {
             let mut c = ValueCryptor::new(sz);
             c.add(CryptOp::Rol, 3);
             c.add(CryptOp::Xor, 0x5a);
-            let e = c.cmds.iter().fold(v & sz.mask(), |a, x| x.apply(a, false));
-            let d = c.cmds.iter().rev().fold(e, |a, x| x.apply(a, true));
+            let e = c.cmds.iter().fold(v & sz.mask(), |a, x| x.apply(a, false).unwrap());
+            let d = c.cmds.iter().rev().try_fold(e, |a, x| x.apply(a, true)).unwrap();
             assert_eq!(d & sz.mask(), v & sz.mask());
         }
+    }
+
+    #[test]
+    fn and_mix_shape() {
+        // NOR schedule shape: Not, Not, And — forward works, inverse
+        // honestly errors (needs the co-byte).
+        let mut cr = ValueCryptor::new(CryptSize::Byte);
+        cr.add(CryptOp::Not, 0);
+        cr.add(CryptOp::Not, 0);
+        cr.add(CryptOp::And, 0xFF);
+        assert_eq!(cr.encrypt(0x3c), 0x3c & 0xFF);
+        assert!(cr.decrypt(0x3c).is_err());
     }
 }

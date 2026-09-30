@@ -112,7 +112,7 @@ pub fn mine_cryptor_with(
                     // continue fall-through inline
                 }
                 Mnemonic::Xor | Mnemonic::Add | Mnemonic::Sub | Mnemonic::Rol | Mnemonic::Ror
-                | Mnemonic::Inc | Mnemonic::Dec | Mnemonic::Neg | Mnemonic::Not => {
+                | Mnemonic::Inc | Mnemonic::Dec | Mnemonic::Neg | Mnemonic::Not | Mnemonic::And => {
                     if ins.op_count() < 1 || ins.op0_kind() != OpKind::Register { continue; }
                     if ins.op0_register() != dst8 { continue; }
                     match ins.mnemonic() {
@@ -120,9 +120,18 @@ pub fn mine_cryptor_with(
                             key_reg = reg_name(ins.op1_register());
                             found_key_mix = true;
                         }
+                        // And-mix schedules (e.g. NOR `~B0 & ~B1`): second
+                        // register is a co-key, not the classic xor key.
+                        Mnemonic::And if ins.op_count() == 2 && ins.op1_kind() == OpKind::Register => {
+                            if key_reg.is_empty() {
+                                key_reg = format!("{}&", reg_name(ins.op1_register()));
+                            }
+                            found_key_mix = true;
+                        }
                         Mnemonic::Xor => { cryptor.add(CryptOp::Xor, ins.immediate8() as u64); steps += 1; }
                         Mnemonic::Add => { cryptor.add(CryptOp::Add, ins.immediate8() as u64); steps += 1; }
                         Mnemonic::Sub => { cryptor.add(CryptOp::Sub, ins.immediate8() as u64); steps += 1; }
+                        Mnemonic::And => { cryptor.add(CryptOp::And, ins.immediate8() as u64); steps += 1; }
                         Mnemonic::Rol => { cryptor.add(CryptOp::Rol, ins.immediate8() as u64); steps += 1; }
                         Mnemonic::Ror => { cryptor.add(CryptOp::Ror, ins.immediate8() as u64); steps += 1; }
                         Mnemonic::Inc => { cryptor.add(CryptOp::Inc, 0); steps += 1; }
@@ -153,7 +162,9 @@ pub fn mine_cryptor(site: &FetchSite, binary: &crate::pe_loader::PEBinary) -> Re
 }
 
 impl MinedCryptor {
-    /// `opcode = cryptor.encrypt(raw ^ key)` — same contract as pure path.
+    /// `opcode = cryptor.encrypt(raw ^ key)` — byte-xor model only.
+    /// Sites with `&`-suffixed key regs (and-mix schedules) report shape;
+    /// their decode needs the co-byte and is NOT covered here.
     pub fn decode(&self, raw: u8, key: u8) -> u8 {
         self.cryptor.encrypt((raw ^ key) as u64) as u8
     }
