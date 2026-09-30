@@ -43,7 +43,7 @@ proof first, automation second, research arcs last.
 - Done when: synth solves >= miner on the 40-site samples with zero
   hand rules for shapes.
 
-### 2.2 Coverage loop closure [WRAPPER DONE, ordering open]
+### 2.2 Coverage loop closure [WRAPPER + PERTURBATION DONE]
 - Have: learn (flip-regions) -> force (+guard) -> mine -> merge,
   each proven separately; 8377 forced addrs banked, 28/48 promo mine.
 - Missing: automatic promotion audits (fetch re-mining inside new

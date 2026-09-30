@@ -120,7 +120,15 @@ relational search finds causes: **`rsi>rbp` at 1.0000 for
 idea 2 forcing. Only 2/1258 watch sites diverge enough to learn
 (rest single-path in this corpus — the coverage wall, quantified).
 
-## Forcing (idea 2 v1 + v2 sweep)
+## Forcing + perturbation (ideas 2+4)
+
+`force_edge` supports `PERTURB="rsi=..,rbp=.."` at `PERTURB_SITE`
+with `PERTURB_ONLY=1` (no RIP override). Critical subtlety found by
+failure: perturbing AT the branch does nothing (flags latch at the
+flag-writer); `PERTURB_SITE` must predate it. Validated: learned rule
+`rsi>rbp` at `0x1410cc2be` flipped to fall-through naturally by
+setting `rsi<rbp` before its `cmp` — first closed learn→perturb→
+observe loop with zero disassembly in the decision.
 
 v1 (`force_edge`, `vmp_devirt_prod` `6fb9a40`): forcing the observed
 fall-through proved mechanics with 0 new code — expected.
