@@ -68,10 +68,17 @@ int main(int argc, char **argv) {
     memset(p, 0, s.size);
     if (s.raw_len) memcpy(p, file + s.file_off, s.raw_len);
   }
-  // sparse scratch like the tracer (staged/heap/stack coverage)
+  // sparse scratch like the tracer (staged/heap/stack coverage).
+  // Collisions are fatal: silent relocation would corrupt the guest map.
   for (uint64_t b = 0x100000; b < 0x80000000; b += 0x100000) {
-    mmap((void *)b, 0x100000, PROT_READ | PROT_WRITE,
-         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    bool clash = false;
+    for (auto &s : kSecs) {
+      if (b + 0x100000 > s.va && b < s.va + s.size) { clash = true; break; }
+    }
+    if (clash) continue;
+    void *p = mmap((void *)b, 0x100000, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (p == MAP_FAILED) { perror("mmap scratch"); return 1; }
   }
   if (mmap(0, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC,
            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) != MAP_FAILED) {
@@ -113,12 +120,17 @@ int main(int argc, char **argv) {
   FILE *rlog = fopen("replay_regs.bin", "wb");
   void *mem = nullptr;
   static const uint64_t kROff[] = {O_RAX,O_RBX,O_RCX,O_RDX,O_RSI,O_RDI,O_RBP,O_RSP,O_R8,O_R9,O_R10,O_R11,O_R12,O_R13,O_R14,O_R15,O_RIP};
-  // FNV-1a over 32KB above rsp (live stack/vctx window; rsp matches
-  // across worlds at legs, so windows align).
+  // FNV-1a over 32KB above rsp (live stack/vctx window) plus the
+  // image pool slots (VM context spill area lives in .text; the loop
+  // counter divergence hid there, outside any rsp window).
   auto stackhash = [&]() -> uint64_t {
     uint64_t h = 1469598103934665603ULL;
-    uint8_t *p = (uint8_t *)(uintptr_t)rreg(st, O_RSP);
-    for (unsigned i = 0; i < 0x8000; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    auto mix = [&](uint8_t *p, unsigned n) {
+      for (unsigned i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    };
+    uint8_t *sp = (uint8_t *)(uintptr_t)rreg(st, O_RSP);
+    mix(sp, 0x8000);
+    mix((uint8_t *)0x140002000, 0x3000);  // pool slots in image
     return h;
   };
   uint64_t stepno = 0;
@@ -128,7 +140,6 @@ int main(int argc, char **argv) {
     if (it == m.end()) { missing = pc; break; }
     if (log) { uint64_t v = pc; fwrite(&v, 8, 1, log); }
     if (rlog) { for (unsigned k = 0; k < 17; k++) { uint64_t v = rreg(st, kROff[k]); fwrite(&v, 8, 1, rlog); } uint64_t sh = stackhash(); fwrite(&sh, 8, 1, rlog); }
-    stepno++;
     try {
       it->second(st, pc, mem);
     } catch (VMJump &j) {

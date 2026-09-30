@@ -10,7 +10,8 @@
 
 use serde::{Serialize, Deserialize};
 
-/// Handler type enum — mirrors VMP source IntelCommandType
+/// Handler type labels (names only; numeric assignment is per-build
+/// and must not be trusted — see module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HandlerType {
     Nop,

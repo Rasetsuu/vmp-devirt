@@ -6,7 +6,8 @@ import os
 import subprocess
 import sys
 
-LIFT = "/home/ciupix/RE/tools/remill/build/bin/lift/remill-lift-22"
+LIFT = os.environ.get("REMILL_LIFT",
+        "/home/ciupix/RE/tools/remill/build/bin/lift/remill-lift-22")
 
 
 def main():
@@ -28,7 +29,12 @@ def main():
                 [LIFT, "--arch", "amd64", "--os", "linux",
                  "--bytes", hx, "--address", vas, "--ir_out", ll],
                 capture_output=True, timeout=120)
-            if r.returncode != 0 or "remill_error(ptr" in open(ll).read():
+            if r.returncode != 0:
+                print("  lift fail %s: %s" % (vas, r.stderr.decode()[:120]))
+                fail += 1
+                continue
+            if "remill_error(ptr" in open(ll).read():
+                print("  lift error-tail %s" % vas)
                 fail += 1
                 continue
             subprocess.run(["opt", "-O3", "-S", ll, "-o", ll + ".bc"],

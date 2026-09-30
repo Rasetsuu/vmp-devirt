@@ -84,11 +84,15 @@ pub fn remill_bin() -> String {
 }
 
 /// Lift via Remill subprocess (`--arch amd64 --bytes <hex> --ir_out -`).
-/// Falls back to `Err` if binary missing so callers can revert to `lift_handler`.
+/// Resolves `REMILL_LIFT`, else PATH lookup, else a relative fallback;
+/// errors only when a configured binary is missing or the lift fails
+/// (a bare fallback name is still attempted via PATH at spawn time).
 pub fn lift_via_remill(bytes: &[u8], va: u64) -> Result<LiftedHandler> {
     let bin = remill_bin();
-    if !std::path::Path::new(&bin).exists() {
-        anyhow::bail!("remill binary not built yet: {}", bin);
+    if let Ok(p) = std::env::var("REMILL_LIFT") {
+        if !std::path::Path::new(&p).exists() {
+            anyhow::bail!("REMILL_LIFT missing: {}", p);
+        }
     }
     let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
     let out = std::process::Command::new(&bin)

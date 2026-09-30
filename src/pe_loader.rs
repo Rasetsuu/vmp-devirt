@@ -84,13 +84,15 @@ impl PEBinary {
             .unwrap_or(0x140000000))
     }
 
-    /// Convert VA to file offset
-    pub fn va_to_offset(&self, va: u64) -> Result<usize> {
+    /// Convert VA to file offset, verifying `size` bytes of file backing.
+    /// Packed sections report virtual sizes far beyond file data;
+    /// unmapped regions are zeros, not neighboring file bytes.
+    pub fn va_to_offset_sized(&self, va: u64, size: usize) -> Result<usize> {
         let pe = self.parse_pe()?;
         let image_base = pe.header.optional_header
             .map(|oh| oh.windows_fields.image_base)
             .unwrap_or(0x140000000);
-        
+
         for section in &pe.sections {
             let section_start = image_base + section.virtual_address as u64;
             let section_end = section_start + section.virtual_size as u64;
@@ -98,11 +100,9 @@ impl PEBinary {
             if va >= section_start && va < section_end {
                 let offset = va - section_start;
                 let file_off = section.pointer_to_raw_data as usize + offset as usize;
-                // Bound against raw size (packed sections report virtual
-                // sizes far beyond file data; unmapped regions are zeros,
-                // not neighboring file bytes).
-                if file_off + 1 > section.pointer_to_raw_data as usize + section.size_of_raw_data as usize {
-                    anyhow::bail!("VA {:#x} has no file backing", va)
+                let raw_end = section.pointer_to_raw_data as usize + section.size_of_raw_data as usize;
+                if file_off + size > raw_end {
+                    anyhow::bail!("VA {:#x}+{:#x} exceeds file backing", va, size)
                 }
                 return Ok(file_off);
             }
@@ -111,9 +111,14 @@ impl PEBinary {
         anyhow::bail!("Invalid VA: 0x{:x}", va)
     }
 
+    /// Convert VA to file offset (single byte; for ranges use sized).
+    pub fn va_to_offset(&self, va: u64) -> Result<usize> {
+        self.va_to_offset_sized(va, 1)
+    }
+
     /// Read bytes from VA
     pub fn read_bytes(&self, va: u64, size: usize) -> Result<Vec<u8>> {
-        let offset = self.va_to_offset(va)?;
+        let offset = self.va_to_offset_sized(va, size)?;
 
         Ok(self.data.get(offset..offset + size)
             .context("Out of bounds read")?
