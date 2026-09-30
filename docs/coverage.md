@@ -143,20 +143,17 @@ add2_dyn still 2/5.
 each, capped at display). `devirt mine` on 40-site samples (static
 bytes; `mine` also accepts movsx — SMC flips B6↔BE):
 
-| Mode | Mined | Key regs | Max chain | Note |
+| Mode | v1 | v2 (call-follow) | v3 (and-mix) | Key regs (v3) |
 |---|---|---|---|---|
-| add2 (Virt) | 22/40 | r10l, dil, r11l | 4 steps | e.g. Ror→Dec→Not→Xor |
-| Mutation | 20/40 | sil, bl | 5 steps | sil-dominant, distinct keys |
-| Ultra | 28/40 | r10l, sil, dil, bpl | 8 steps | longest chains, mixed keys |
-| Virtualization | 29/40 | r9l, sil, r8l, r11l | 8 steps | r9l-dominant |
+| add2 (Virt) | 22 | 25 | **25** (5 and-mix) | r10l, dil, r11l |
+| Mutation | 20 | 20 | **24** (3 and-mix) | sil, bl, dil&, r8l |
+| Ultra | 28 | 28 | **30** (6 and-mix) | r10l, sil, dil, bpl |
+| Virtualization | 29 | 29 | **31** (4 and-mix) | r9l, sil, r8l, r11l |
 
-Unmined sites are call-hidden cryptors (`movzx; mov; call`):
-miner v2 (`mine_cryptor_with`, call-follow depth-1, snapshot-overlay
-reader) mines +3/40 on add2 static (22→25/40).
-New CLI: `mine-live <snapdir> <site>` (overlay sections) and
-`mine-hits <open_hits.json>` (hit-time code). Cross-check on
-`0x140eb8c73`: file bytes, overlay, and hit-time agree
-(key=dil, Neg→Not→Neg→Ror1). Distant call/jmp targets outside the
-captured window stay unmined — full-section live dumps close that.
+Unmined remainder: encrypted-handler bytes (no chain visible
+statically) + deep call-hidden shapes — live mining
+(`mine-live`/`mine-hits`) covers those where hit-time code exists
+(cross-check on `0x140eb8c73`: file, overlay, hit-time agree —
+key=dil, Neg→Not→Neg→Ror1).
 Key-register sets differ per mode: per-mode mining is required, a
 single watchlist/cryptor does not transfer.
