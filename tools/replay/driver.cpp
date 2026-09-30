@@ -142,8 +142,6 @@ int main(int argc, char **argv) {
     return (uint64_t)a;
   };
   uint64_t stepno = 0;
-  // volatile: longjmp bypasses normal flow; cached counter would go stale.
-  volatile uint64_t steps = 0;
   for (; steps < bound; steps++, stepno++) {
     g_step = stepno;
     auto it = m.find(pc);
