@@ -165,10 +165,10 @@ bytes; `mine` also accepts movsx — SMC flips B6↔BE):
 
 | Mode | v1 | v2 (call-follow) | v3 (and-mix) | Key regs (v3) |
 |---|---|---|---|---|
-| add2 (Virt) | 22 | 25 | **25** (5 and-mix) | r10l, dil, r11l |
-| Mutation | 20 | 20 | **24** (3 and-mix) | sil, bl, dil&, r8l |
-| Ultra | 28 | 28 | **30** (6 and-mix) | r10l, sil, dil, bpl |
-| Virtualization | 29 | 29 | **31** (4 and-mix) | r9l, sil, r8l, r11l |
+| add2 (Virt) | 22 | 25 | 25 | **25** | r10l, dil, r11l |
+| Mutation | 20 | 20 | 24 | **25** | sil, bl, dil&, r8l |
+| Ultra | 28 | 28 | 30 | **32** | r10l, sil, dil, bpl |
+| Virtualization | 29 | 29 | 31 | **32** | r9l, sil, r8l, r11l |
 
 Unmined remainder: encrypted-handler bytes (no chain visible
 statically) + deep call-hidden shapes — live mining
