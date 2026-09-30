@@ -179,5 +179,26 @@ int main(int argc, char **argv) {
          (unsigned long)steps, (unsigned long)stepno, (unsigned long)missing,
          (unsigned long)stub_last(),
          (unsigned long)rreg(st, O_RAX), (unsigned long)pc);
+  // End-state hashes: full mapped ranges (sections + heap + staged +
+  // stack + pool). Two runs that truly finished the same program agree
+  // on all of them; anything less is a different end.
+  {
+    auto rh = [&](uint8_t *p, unsigned n) -> uint64_t {
+      uLong a = adler32(0L, Z_NULL, 0);
+      return (uint64_t)adler32(a, (const Bytef *)p, n);
+    };
+    printf("final stack=%#lx pool=%#lx heap=%#lx staged=%#lx\n",
+           (unsigned long)rh((uint8_t *)0x7FF00000, 0x100000),
+           (unsigned long)rh((uint8_t *)0x140002000, 0x3000),
+           (unsigned long)rh((uint8_t *)0x71000000, 0x100000),
+           (unsigned long)rh((uint8_t *)0x300000, 0x100000));
+    uint64_t him = 0;
+    for (auto &s : kSecs) {
+      uLong a = adler32(0L, Z_NULL, 0);
+      him ^= (uint64_t)adler32(a, (const Bytef *)(uintptr_t)s.va, (unsigned)(s.size > 0x200000 ? 0x200000 : s.size));
+      him = him * 1099511628211ULL + s.va;
+    }
+    printf("final image=%#lx\n", (unsigned long)him);
+  }
   return 0;
 }
