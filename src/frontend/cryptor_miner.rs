@@ -102,7 +102,20 @@ pub fn mine_cryptor_with(
             if first_in_path { first_in_path = false; } // path-start IP is in visited by construction
             else if !visited.insert(ins.ip()) { break; } // loop guard
             match ins.mnemonic() {
-                Mnemonic::Jmp | Mnemonic::Ret => break, // terminal dispatch
+                Mnemonic::Ret => break, // terminal dispatch
+                Mnemonic::Jmp => {
+                    // Chain bridge (like jcc splits and call-hidden
+                    // cryptors): follow direct jumps once; true terminal
+                    // dispatch jumps land in code with no dst8 chain ops
+                    // and simply yield nothing further.
+                    if depth < 1 && ins.op_count() == 1 && ins.op0_kind() == OpKind::NearBranch64 {
+                        let tgt = ins.near_branch_target();
+                        if tgt != 0 && !visited.contains(&tgt) {
+                            worklist.push((tgt, depth + 1));
+                        }
+                    }
+                    break;
+                }
                 Mnemonic::Call => {
                     // Call-hidden cryptor (3.9.4): follow one level.
                     if depth < 1 && ins.op_count() == 1 && ins.op0_kind() == OpKind::NearBranch64 {
