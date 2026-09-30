@@ -17,11 +17,12 @@ def main():
     ok = skip = fail = 0
     for i, (vas, hx) in enumerate(items):
         va = int(vas, 16)
-        obj = "%s/b_%04d.o" % (out, i)
+        tag = "%08x" % va
+        obj = "%s/b_%s.o" % (out, tag)
         if os.path.exists(obj):
             skip += 1
             continue
-        ll = "%s/b_%04d.ll" % (out, i)
+        ll = "%s/b_%s.ll" % (out, tag)
         try:
             r = subprocess.run(
                 [LIFT, "--arch", "amd64", "--os", "linux",

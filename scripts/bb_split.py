@@ -58,19 +58,33 @@ def main():
                     starts.add(tgt)
             except Exception:
                 pass
-    # blocks: bytes from start to first CF inclusive (cap 32 insns)
+    # blocks: bytes from start to first CF inclusive (cap 32 insns);
+    # worklist: cap-cut continuations (if executed) become new starts.
     blocks = {}
-    for va in sorted(starts):
-        code = rb(va, 256)
+    work = sorted(starts)
+    seen = set(work)
+    while work:
+        va = work.pop(0)
+        code = rb(va, 512)
         if not code:
             continue
         n = 0
+        done = False
         for ins in md.disasm(code, va):
             n += 1
             if is_cf(ins.mnemonic) or n >= 32:
                 end = ins.address + ins.size - va
                 blocks[hex(va)] = code[:end].hex()
+                if n >= 32 and not is_cf(ins.mnemonic):
+                    cont = ins.address + ins.size
+                    if cont in exe and cont not in seen:
+                        seen.add(cont)
+                        work.append(cont)
+                done = True
                 break
+        if not done:
+            continue
+    starts = seen
     print("executed=%d decoded=%d bb_starts=%d blocks=%d"
           % (len(exe), len(dec), len(starts), len(blocks)))
     json.dump(blocks, open(out, "w"))
