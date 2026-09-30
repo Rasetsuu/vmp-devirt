@@ -19,15 +19,23 @@ extern "C" void replay_register(void *m) {
 }
 extern "C" uint64_t replay_missing_addr(void);
 
-// ---- memory: direct host map (driver mmaps guest VAs 1:1) ----
-extern "C" uint8_t __remill_read_memory_8(Memory *, addr_t a) { return *(uint8_t *)a; }
-extern "C" uint16_t __remill_read_memory_16(Memory *, addr_t a) { return *(uint16_t *)a; }
-extern "C" uint32_t __remill_read_memory_32(Memory *, addr_t a) { return *(uint32_t *)a; }
-extern "C" uint64_t __remill_read_memory_64(Memory *, addr_t a) { return *(uint64_t *)a; }
-extern "C" Memory *__remill_write_memory_8(Memory *m, addr_t a, uint8_t v) { *(uint8_t *)a = v; return m; }
-extern "C" Memory *__remill_write_memory_16(Memory *m, addr_t a, uint16_t v) { *(uint16_t *)a = v; return m; }
-extern "C" Memory *__remill_write_memory_32(Memory *m, addr_t a, uint32_t v) { *(uint32_t *)a = v; return m; }
-extern "C" Memory *__remill_write_memory_64(Memory *m, addr_t a, uint64_t v) { *(uint64_t *)a = v; return m; }
+// ---- memory: direct host map (driver mmaps guest VAs 1:1), except
+// page 0 (host mmap_min_addr forbids it): a 4KB buffer backs guest
+// [0, 0x1000), e.g. the tracer's ret stub + zero reads like [0x60].
+static uint8_t g_lowpage[0x1000];
+extern "C" void replay_init_mem(void) { g_lowpage[0] = 0xC3; }  // ret stub
+static inline uint8_t *haddr(addr_t a) {
+  if (a < 0x1000) return &g_lowpage[a];
+  return (uint8_t *)(uintptr_t)a;
+}
+extern "C" uint8_t __remill_read_memory_8(Memory *, addr_t a) { return *haddr(a); }
+extern "C" uint16_t __remill_read_memory_16(Memory *, addr_t a) { return *(uint16_t *)haddr(a); }
+extern "C" uint32_t __remill_read_memory_32(Memory *, addr_t a) { return *(uint32_t *)haddr(a); }
+extern "C" uint64_t __remill_read_memory_64(Memory *, addr_t a) { return *(uint64_t *)haddr(a); }
+extern "C" Memory *__remill_write_memory_8(Memory *m, addr_t a, uint8_t v) { *haddr(a) = v; return m; }
+extern "C" Memory *__remill_write_memory_16(Memory *m, addr_t a, uint16_t v) { *(uint16_t *)haddr(a) = v; return m; }
+extern "C" Memory *__remill_write_memory_32(Memory *m, addr_t a, uint32_t v) { *(uint32_t *)haddr(a) = v; return m; }
+extern "C" Memory *__remill_write_memory_64(Memory *m, addr_t a, uint64_t v) { *(uint64_t *)haddr(a) = v; return m; }
 
 // ---- undefined: zero ----
 extern "C" uint8_t __remill_undefined_8(void) { return 0; }

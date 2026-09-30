@@ -18,6 +18,7 @@ using Fn = void *(*)(void *, uint64_t, void *);
 extern "C" void replay_register(void *);
 extern "C" uint64_t replay_missing(void);
 extern "C" uint64_t stub_last(void);
+extern "C" void replay_init_mem(void);
 static uint8_t *g_st;
 static void segv_dump(int) {
   const unsigned off[] = {2216, 2232, 2248, 2264, 2280, 2296, 2312, 2328,
@@ -89,6 +90,7 @@ int main(int argc, char **argv) {
   uint8_t *st = (uint8_t *)calloc(1, 8192);
   g_st = st;
   signal(SIGSEGV, segv_dump);
+  replay_init_mem();
   uint64_t pool = kPool;
   wreg(st, O_RAX, pool); wreg(st, O_RBX, pool); wreg(st, O_RSI, pool);
   wreg(st, O_RDI, pool); wreg(st, O_R8, pool); wreg(st, O_R9, pool);
