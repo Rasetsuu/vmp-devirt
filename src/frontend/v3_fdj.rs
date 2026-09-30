@@ -2,7 +2,6 @@
 use anyhow::Result;
 use crate::frontend::{FetchHit, VmFrontend};
 use crate::frontend::fetch_finder::{scan_fetch_sites_strict, FetchSite};
-use crate::frontend::site_emulator::extract_opcode_pure;
 use crate::pe_loader::PEBinary;
 
 pub struct V3Fdj;

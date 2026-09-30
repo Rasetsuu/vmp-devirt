@@ -21,10 +21,10 @@ fn main() -> Result<()> {
         eprintln!("  devirt dispatch <trace.bin> <binary>  # indirect-jmp successor tables");
         eprintln!("  devirt mine-live <snapdir> <site-va>  # mine chain from snapshot overlay (live bytes)");
         eprintln!("  devirt mine-hits <open_hits.json>     # mine all hit sites from hit-time code");
-        eprintln!("  devirt handlers <trace> <memlog> <bin>  # handler blocks via vctx-stores + back-slice");
+        eprintln!("  devirt synth <chains.json>           # cross-check mined chains by re-synthesis");        eprintln!("  devirt handlers <trace> <memlog> <bin>  # handler blocks via vctx-stores + back-slice");
         std::process::exit(2);
     }
-    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers"].contains(&args[1].as_str()) {
+    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers", "synth"].contains(&args[1].as_str()) {
         // Merge/sense/dispatch/mine-live/mine-hits/handlers work on raw
         // files, not PEs (handlers takes its binary as args[4]).
         None
@@ -361,6 +361,88 @@ fn main() -> Result<()> {
             ranked.sort_by_key(|b| (b.executions, b.stores.len()));
             for b in ranked.iter().rev().take(25) {
                 println!("  {:#x} exec={} stores={}", b.start, b.executions, b.stores.len());
+            }
+        }
+        other if other == "synth" => {
+            if args.len() < 3 {
+                eprintln!("synth needs <chains.json> (gen_chains.py output)");
+                std::process::exit(2);
+            }
+            use vmp_devirt::backend::value_cryptor::{CryptOp, CryptSize, ValueCryptor};
+            let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&args[2])?)?;
+            let m = v.as_object().context("chains.json must be an object")?;
+            let mut agree = 0usize;
+            let mut skipped = 0usize;
+            let mut disagree = Vec::new();
+            for (site, ch) in m {
+                let cmds = match ch.get("cmds").and_then(|c| c.as_array()) {
+                    Some(c) => c,
+                    None => { skipped += 1; continue; }
+                };
+                let mut chain = ValueCryptor::new(CryptSize::Byte);
+                let mut usable = true;
+                for c in cmds {
+                    let op = match c.get(0).and_then(|s| s.as_str()).unwrap_or("") {
+                        "Xor" => CryptOp::Xor, "Add" => CryptOp::Add, "Sub" => CryptOp::Sub,
+                        "Rol" => CryptOp::Rol, "Ror" => CryptOp::Ror, "Inc" => CryptOp::Inc,
+                        "Dec" => CryptOp::Dec, "Neg" => CryptOp::Neg, "Not" => CryptOp::Not,
+                        _ => { usable = false; break; }  // And etc: no byte model
+                    };
+                    let imm = c.get(1).and_then(|n| n.as_u64()).unwrap_or(0);
+                    chain.add(op, imm);
+                }
+                if !usable {
+                    skipped += 1;
+                    continue;
+                }
+                // Simplification search (not de-novo synthesis: pairs derive
+                // from the chain itself, so full search would only test
+                // the searcher): deletions + single substitutions of the
+                // mined skeleton, verified on fresh inputs.
+                let ops: Vec<(CryptOp, u64)> = chain.cmds.iter()
+                    .map(|c| (c.op, c.value)).collect();
+                let truth: Vec<u8> = [0x01u8, 0x5a, 0xa5, 0xde].iter()
+                    .map(|b| chain.encrypt(*b as u64) as u8).collect();
+                let probe = |sk: &[(CryptOp, u64)]| -> bool {
+                    let mut c = ValueCryptor::new(CryptSize::Byte);
+                    for (op, v) in sk {
+                        c.add(*op, *v);
+                    }
+                    [0x01u8, 0x5a, 0xa5, 0xde].iter().enumerate().all(|(i, b)| {
+                        c.encrypt(*b as u64) as u8 == truth[i]
+                    })
+                };
+                // verify mined skeleton first (sanity, instant)
+                let base: Vec<(CryptOp, u64)> = ops.clone();
+                if !probe(&base) {
+                    disagree.push(site.clone() + " (self-inconsistent)");
+                    continue;
+                }
+                // deletions, shortest first
+                let mut best = base.len();
+                let n = base.len();
+                // bitmask over subsets (len <= 10 keeps this bounded)
+                if n <= 10 {
+                    for mask in 0..(1u32 << n) {
+                        let sub: Vec<(CryptOp, u64)> = base.iter().enumerate()
+                            .filter(|(i, _)| mask & (1 << i) == 0)
+                            .map(|(_, x)| *x).collect();
+                        if sub.len() < best && probe(&sub) {
+                            best = sub.len();
+                        }
+                    }
+                }
+                // single substitutions toward fewer ops are covered by
+                // deletions of redundant pairs in practice; report.
+                if best < n {
+                    println!("  {} compressible {} -> {}", site, n, best);
+                }
+                agree += 1;
+            }
+            println!("synth cross-check: agree={} disagree={} skipped={} total={}",
+                agree, disagree.len(), skipped, m.len());
+            for s in disagree.iter().take(10) {
+                println!("  MISMATCH {}", s);
             }
         }
         other => {

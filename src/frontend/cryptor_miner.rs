@@ -172,12 +172,12 @@ pub fn mine_cryptor_with(
                             }
                             found_key_mix = true;
                         }
-                        Mnemonic::Xor => { cryptor.add(CryptOp::Xor, ins.immediate8() as u64); steps += 1; }
-                        Mnemonic::Add => { cryptor.add(CryptOp::Add, ins.immediate8() as u64); steps += 1; }
-                        Mnemonic::Sub => { cryptor.add(CryptOp::Sub, ins.immediate8() as u64); steps += 1; }
+                        Mnemonic::Xor => { if ins.immediate8() != 0 { cryptor.add(CryptOp::Xor, ins.immediate8() as u64); steps += 1; } }
+                        Mnemonic::Add => { if ins.immediate8() != 0 { cryptor.add(CryptOp::Add, ins.immediate8() as u64); steps += 1; } }
+                        Mnemonic::Sub => { if ins.immediate8() != 0 { cryptor.add(CryptOp::Sub, ins.immediate8() as u64); steps += 1; } }
                         Mnemonic::And => { cryptor.add(CryptOp::And, ins.immediate8() as u64); steps += 1; }
-                        Mnemonic::Rol => { cryptor.add(CryptOp::Rol, ins.immediate8() as u64); steps += 1; }
-                        Mnemonic::Ror => { cryptor.add(CryptOp::Ror, ins.immediate8() as u64); steps += 1; }
+                        Mnemonic::Rol => { if ins.immediate8() % 8 != 0 { cryptor.add(CryptOp::Rol, ins.immediate8() as u64); steps += 1; } }
+                        Mnemonic::Ror => { if ins.immediate8() % 8 != 0 { cryptor.add(CryptOp::Ror, ins.immediate8() as u64); steps += 1; } }
                         Mnemonic::Inc => { cryptor.add(CryptOp::Inc, 0); steps += 1; }
                         Mnemonic::Dec => { cryptor.add(CryptOp::Dec, 0); steps += 1; }
                         Mnemonic::Neg => { cryptor.add(CryptOp::Neg, 0); steps += 1; }

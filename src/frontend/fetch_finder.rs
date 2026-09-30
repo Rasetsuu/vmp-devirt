@@ -6,7 +6,6 @@
 //! Rust port of the Python prefix-aware scanner that produced
 //! `fetch_sites_all2.json` (152 sites).
 
-use anyhow::Result;
 use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 
 #[derive(Debug, Clone)]
