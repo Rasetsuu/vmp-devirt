@@ -127,18 +127,15 @@ int main(int argc, char **argv) {
   if (rlog) fwrite(kFmt, 8, 2, rlog);
   void *mem = nullptr;
   static const uint64_t kROff[] = {O_RAX,O_RBX,O_RCX,O_RDX,O_RSI,O_RDI,O_RBP,O_RSP,O_R8,O_R9,O_R10,O_R11,O_R12,O_R13,O_R14,O_R15,O_RIP};
-  // FNV-1a over 32KB above rsp (live stack/vctx window) plus the
-  // image pool slots (VM context spill area lives in .text; the loop
-  // counter divergence hid there, outside any rsp window).
+  // adler32 over the FULL 1MB stack page (loop-carried frame slots live
+  // below rsp, outside any rsp-relative window) plus image pool slots.
+  // (zlib-speed: FNV in driver was fine, but the oracle side is Python.)
+#include <zlib.h>
   auto stackhash = [&]() -> uint64_t {
-    uint64_t h = 1469598103934665603ULL;
-    auto mix = [&](uint8_t *p, unsigned n) {
-      for (unsigned i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ULL; }
-    };
-    uint8_t *sp = (uint8_t *)(uintptr_t)rreg(st, O_RSP);
-    mix(sp, 0x8000);
-    mix((uint8_t *)0x140002000, 0x3000);  // pool slots in image
-    return h;
+    uLong a = adler32(0L, Z_NULL, 0);
+    a = adler32(a, (const Bytef *)0x7FF00000, 0x100000);
+    a = adler32(a, (const Bytef *)0x140002000, 0x3000);
+    return (uint64_t)a;
   };
   uint64_t stepno = 0;
   for (; steps < bound; steps++, stepno++) {
