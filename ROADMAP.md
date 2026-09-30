@@ -18,7 +18,7 @@ proof first, automation second, research arcs last.
 - Note: replay proves the lifted code correct; this proves it
   stands alone.
 
-### 1.2 Sweep completion [IN PROGRESS: 450/2095 sites, 8377 addrs]
+### 1.2 Sweep completion [IN PROGRESS: 450/2095 forged, 8377 addrs banked; batch to 750 running]
 - Depends: force_edge + guard + promotion (all built).
 - Work: forge remaining ~1945 single-path jcc sites (batches in
   background), promote new fetch sites, re-mine.
@@ -45,7 +45,7 @@ proof first, automation second, research arcs last.
 
 ### 2.2 Coverage loop closure [PARTIAL]
 - Have: learn (flip-regions) -> force (+guard) -> mine -> merge,
-  each proven separately; 2293 forced addrs banked.
+  each proven separately; 8377 forced addrs banked, 28/48 promo mine.
 - Missing: automatic promotion audits (fetch re-mining inside new
   code runs by hand today), derailment-guard tuning per target.
 - Done when: one command runs learn->force->mine->merge and reports
