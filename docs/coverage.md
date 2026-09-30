@@ -35,6 +35,15 @@ foreign watchlist barely fires. Per-mode mining is the follow-up.
 `scripts/branch_solve.py` on add2 branch-watch run: 5 divergent sites,
 4 perfect (2202/2202, 88/88, 3994/3996, 779/779, 100/100).
 
+## Chain verification (mined => verified)
+
+`scripts/chain_verify.py`: group watch-hit visits by decoded opcode,
+require equal opcodes to predict equal next-handlers (trace order).
+gadd watchlist: 158/158 consistent (156 visits on one site, 2 opcodes,
+0 inconsistent). Caveat: only 4/260 watch sites mine statically —
+the watchlist is 98% stale (SMC); live mining (`mine-hits`) is the
+source for the rest. This is the differential check Claude asked for.
+
 ## Replay fidelity (lifted 3.9.4 re-execution)
 
 `tools/replay/` + lockstep `py_bb_diff2.py`: Remill-lifted BBs
