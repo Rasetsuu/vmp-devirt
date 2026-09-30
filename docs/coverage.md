@@ -164,7 +164,7 @@ each, capped at display). `devirt mine` on 40-site samples (static
 bytes; `mine` also accepts movsx — SMC flips B6↔BE):
 
 | Mode | v1 | v2 (call) | v3 (and-mix) | v4 (jmp-bridge) | Key regs |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
 | add2 (Virt) | 22 | 25 | 25 | **25** | r10l, dil, r11l |
 | Mutation | 20 | 20 | 24 | **25** | sil, bl, dil&, r8l |
 | Ultra | 28 | 28 | 30 | **32** | r10l, sil, dil, bpl |
