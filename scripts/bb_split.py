@@ -7,6 +7,7 @@ import json
 import os
 import struct
 import sys
+from collections import Counter, defaultdict
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
 
 CF = {"jmp", "call", "ret"}  # + jcc*
@@ -63,6 +64,26 @@ def main():
     # Plus: every observed successor of an indirect jump becomes a start
     # (replay lands on them via trampolines; static fallthrough logic
     # cannot see them). Single pass over trace edges.
+    # Plus: non-fallthrough observed successors of ANY executed CF
+    # (ret/ret-imm/call-reg/jcc-taken land off-corpus statically).
+    observed_succ = defaultdict(set)
+    for a, b in zip(trs, trs[1:]):
+        if b in exe:
+            observed_succ[a].add(b)
+    for va, ss in observed_succ.items():
+        code = rb(va, 15)
+        if not code:
+            continue
+        ins = list(md.disasm(code, va, count=1))
+        if not ins:
+            continue
+        ins = ins[0]
+        if not is_cf(ins.mnemonic):
+            continue
+        ft = va + ins.size
+        for b in ss:
+            if b != ft:
+                starts.add(b)
     ind_cache = {}
 
     def is_indjmp(va):
