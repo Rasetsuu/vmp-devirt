@@ -29,3 +29,15 @@ llvm = ["llvm-sys"]
 
 [profile.release]
 opt-level = 3
+
+[[bin]]
+name = "trace_open_fetch"
+path = "tools/trace_open_fetch.rs"
+
+[[bin]]
+name = "force_edge"
+path = "tools/force_edge.rs"
+
+[[bin]]
+name = "recompile"
+path = "tools/recompile.rs"

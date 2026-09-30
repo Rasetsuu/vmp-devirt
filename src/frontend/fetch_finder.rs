@@ -127,6 +127,7 @@ pub fn load_snapshots(dir: &str) -> Vec<(u64, Vec<u8>)> {
             .unwrap_or_default();
     let bget = |n: &str, dflt: u64| *bmap.get(n).unwrap_or(&dflt);
     let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for (name, base) in [
         ("text", bget("text", 0x140001000u64)),
         ("rdata", bget("rdata", 0x140003000)),
@@ -137,7 +138,21 @@ pub fn load_snapshots(dir: &str) -> Vec<(u64, Vec<u8>)> {
         ("heap", bget("heap", 0x71000000)),
     ] {
         if let Ok(d) = std::fs::read(format!("{}/open_mem_{}.bin", dir, name)) {
+            seen.insert(name.to_string());
             out.push((base, d));
+        }
+    }
+    // Generic sweep: any open_mem_<tag>.bin with a base in open_bases.json
+    // (protector section tags differ per build; fixed names miss them).
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.starts_with("open_mem_") || !name.ends_with(".bin") { continue; }
+            let tag = &name["open_mem_".len()..name.len() - ".bin".len()];
+            if seen.contains(tag) { continue; }
+            if let (Some(base), Ok(d)) = (bmap.get(tag).copied(), std::fs::read(e.path())) {
+                out.push((base, d));
+            }
         }
     }
     out
