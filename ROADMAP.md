@@ -18,7 +18,7 @@ proof first, automation second, research arcs last.
 - Note: replay proves the lifted code correct; this proves it
   stands alone.
 
-### 1.2 Sweep completion [IN PROGRESS: 450/2095 forged, 8377 addrs banked; batch to 750 running]
+### 1.2 Sweep completion [IN PROGRESS: 750/2095 forged, 11151 addrs banked]
 - Depends: force_edge + guard + promotion (all built).
 - Work: forge remaining ~1945 single-path jcc sites (batches in
   background), promote new fetch sites, re-mine.
