@@ -60,6 +60,28 @@ def main():
                 pass
     # blocks: bytes from start to first CF inclusive (cap 32 insns);
     # worklist: cap-cut continuations (if executed) become new starts.
+    # Plus: every observed successor of an indirect jump becomes a start
+    # (replay lands on them via trampolines; static fallthrough logic
+    # cannot see them). Single pass over trace edges.
+    ind_cache = {}
+
+    def is_indjmp(va):
+        if va in ind_cache:
+            return ind_cache[va]
+        code = rb(va, 6)
+        r = False
+        if code:
+            ins = list(md.disasm(code, va, count=1))
+            if ins:
+                ins = ins[0]
+                r = (ins.mnemonic == "jmp" and "[" not in ins.op_str
+                     and "0x" not in ins.op_str)
+        ind_cache[va] = r
+        return r
+
+    for a, b in zip(trs, trs[1:]):
+        if b in exe and is_indjmp(a):
+            starts.add(b)
     blocks = {}
     work = sorted(starts)
     seen = set(work)
