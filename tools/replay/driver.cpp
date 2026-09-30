@@ -127,19 +127,18 @@ int main(int argc, char **argv) {
   // (different loss per file breaks leg alignment).
   if (log) setvbuf(log, nullptr, _IONBF, 0);
   if (rlog) setvbuf(rlog, nullptr, _IONBF, 0);
-  // format tag: magic + regs-per-leg (py side verifies, skew fails loud)
-  const uint64_t kFmt[2] = {0x5247455230303032ULL, 18};
+  // format tag: magic + u64s-per-leg (py side verifies, skew fails loud)
+  const uint64_t kFmt[2] = {0x5247455230303033ULL, 21};
   if (rlog) fwrite(kFmt, 8, 2, rlog);
   void *mem = nullptr;
   static const uint64_t kROff[] = {O_RAX,O_RBX,O_RCX,O_RDX,O_RSI,O_RDI,O_RBP,O_RSP,O_R8,O_R9,O_R10,O_R11,O_R12,O_R13,O_R14,O_R15,O_RIP};
-  // adler32 over the FULL 1MB stack page (loop-carried frame slots live
-  // below rsp, outside any rsp-relative window) plus image pool slots.
-  // (zlib-speed: FNV in driver was fine, but the oracle side is Python.)
-  auto stackhash = [&]() -> uint64_t {
+  // adler32 state hashes, one per region, so lockstep localizes the
+  // first divergence (a combined hash only says "somewhere").
+  // Regions: full 1MB stack page (loop frames live below rsp), image
+  // pool slots, heap, staged scratch.
+  auto reghash = [&](uint8_t *p, unsigned n) -> uint64_t {
     uLong a = adler32(0L, Z_NULL, 0);
-    a = adler32(a, (const Bytef *)0x7FF00000, 0x100000);
-    a = adler32(a, (const Bytef *)0x140002000, 0x3000);
-    return (uint64_t)a;
+    return (uint64_t)adler32(a, (const Bytef *)p, n);
   };
   uint64_t stepno = 0;
   for (; steps < bound; steps++, stepno++) {
@@ -147,7 +146,15 @@ int main(int argc, char **argv) {
     auto it = m.find(pc);
     if (it == m.end()) { missing = pc; break; }
     if (log) { uint64_t v = pc; fwrite(&v, 8, 1, log); }
-    if (rlog) { for (unsigned k = 0; k < 17; k++) { uint64_t v = rreg(st, kROff[k]); fwrite(&v, 8, 1, rlog); } uint64_t sh = stackhash(); fwrite(&sh, 8, 1, rlog); }
+    if (rlog) {
+      for (unsigned k = 0; k < 17; k++) { uint64_t v = rreg(st, kROff[k]); fwrite(&v, 8, 1, rlog); }
+      uint64_t hs = reghash((uint8_t *)0x7FF00000, 0x100000);
+      uint64_t hp = reghash((uint8_t *)0x140002000, 0x3000);
+      uint64_t hh = reghash((uint8_t *)0x71000000, 0x100000);
+      uint64_t hg = reghash((uint8_t *)0x300000, 0x100000);
+      fwrite(&hs, 8, 1, rlog); fwrite(&hp, 8, 1, rlog);
+      fwrite(&hh, 8, 1, rlog); fwrite(&hg, 8, 1, rlog);
+    }
     if (setjmp(g_jmpbuf) != 0) {
       // trampoline bounce: continue at pending target
       pc = g_pending;
