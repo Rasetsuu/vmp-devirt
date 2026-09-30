@@ -25,7 +25,7 @@ proof first, automation second, research arcs last.
 - Done when: candidate list exhausted or marginal yield < 1% for
   two consecutive batches of 100.
 
-### 1.3 Miner v3 [OPEN, bounded]
+### 1.3 Miner v3 [DONE static; live shapes open]
 - Depends: live-capture promotion (built).
 - Work: `and`-key-mix shapes (`and r8b,r9b` observed live, unmined),
   16-bit dst edge cases in the Rust miner, call-depth-2 follow.
