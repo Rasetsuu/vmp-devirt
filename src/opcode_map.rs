@@ -1,8 +1,12 @@
-/// Canonical VMP opcode→handler type mapping.
+/// Legacy reference: VM handler-type labels per opcode byte.
 ///
-/// Generated from VMP 3.5.1 source `intel.h` InitCommands registration order.
-/// This is STATIC — identical for all VMP 1.0-3.6.0.
-/// Opcode = sequential index in source enum registration order.
+/// Ordering follows published analyses of the 3.5-era handler set; it is
+/// kept as a cross-check oracle only. Do NOT trust it across builds:
+/// per-build opcode permutation is directly observed on 3.7+
+/// (byte-level cross-build diffs are meaningless; validate handler
+/// semantics differentially instead — see docs/coverage.md).
+/// `handler_classifier` (legacy fallback) and the `map` CLI are the
+/// only consumers; version front-ends must not depend on this table.
 
 use serde::{Serialize, Deserialize};
 
@@ -73,10 +77,10 @@ impl CanonicalOpcodeMap {
     }
 }
 
-/// Build canonical 256-entry opcode map matching VMP 3.5.1 InitCommands order
+/// Build the 256-entry reference table (legacy 3.5-era ordering).
 const fn generate() -> [OpcodeEntry; 256] {
-    // Manual construction to match source enum order
-    // build_opcode_map.py: canonical_handlers() order
+    // Manual construction in handler-set order; indices are labels,
+    // not stable cross-build identifiers.
     let mut m = [OpcodeEntry {
         opcode: 0, handler_type: HandlerType::Unknown,
         semantic: "", data_size: 0, stack_effect: 0, description: "",

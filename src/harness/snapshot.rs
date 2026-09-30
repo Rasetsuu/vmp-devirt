@@ -183,7 +183,8 @@ pub fn capture(
     let do_skip = cfg.skip_zero_slides;
     let (slide_lo, slide_hi) = cfg.slide_range.unwrap_or((0x300000, 0x900000));
     let hook = emu.add_code_hook(1, 0, move |emu, addr, _size| {
-        count += 1;
+        // NOTE: single count per traced insn (was double-counted with the
+        // increment at the hook top; bounds/steps were 2x real).
         // Zero-slide fast-forward: `add [rax],al` over zero padding.
         // Exact: iters=len/2, cell+=iters*al, flags from last add.
         if do_skip && slide_lo <= addr && addr < slide_hi {

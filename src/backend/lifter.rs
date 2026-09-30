@@ -70,13 +70,14 @@ pub fn remill_bin() -> String {
     if let Ok(p) = std::env::var("REMILL_LIFT") {
         return p;
     }
-    for c in [
-        "remill-lift-22",
-        "remill-lift",
-        "remill-lift-6.0"
-    ] {
-        if std::path::Path::new(c).exists() {
-            return c.to_string();
+    // Bare names resolve via PATH lookup (Path::exists can't do that).
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for c in ["remill-lift-22", "remill-lift", "remill-lift-6.0"] {
+                if dir.join(c).is_file() {
+                    return c.to_string();
+                }
+            }
         }
     }
     "remill-lift".to_string()

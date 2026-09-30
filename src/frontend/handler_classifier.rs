@@ -20,9 +20,9 @@ pub fn classify_handler_v394(binary: &PEBinary, handler_va: u64) -> (String, u8,
 }
 
 /// Map a decrypted opcode byte (from `site_emulator::extract_opcode_pure`) to
-/// canonical HandlerType via `opcode_map.rs` 3.5.1 table.
-/// For 3.9.4 the opcode value is still within 0..255; unknown entries mean
-/// the handler is a merged handler (FUTURE_WORK.md) — caller should fallback to
+/// a handler-type label via the legacy reference table (`opcode_map.rs`).
+/// Labels are advisory only on 3.7+ (per-build permutation); unknown
+/// entries mean the handler is a merged handler — caller should prefer
 /// per-handler disasm above.
 pub fn opcode_to_handler_type(opcode: u8) -> HandlerType {
     CanonicalOpcodeMap::lookup(opcode).handler_type

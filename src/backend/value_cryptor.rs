@@ -1,11 +1,18 @@
-//! ValueCryptor port from VMP 3.5.1 leak `core/processors.cc`
+//! Bytecode value chains: ordered ALU transforms over a fetch byte.
 //!
-//! `ValueCommand` = one transform (ADD/SUB/XOR/ROL/ROR/NOT/NEG/BSWAP/INC/DEC)
-//! `ValueCryptor` = ordered chain; `Encrypt` applies forward, `Decrypt` applies
-//! inverse in reverse order (ADD<->SUB, INC<->DEC, ROL<->ROR).
+//! Derived from observation, not from any protector source: the miner
+//! (`frontend::cryptor_miner`) recovers chains like
+//! `Neg -> Not -> Neg -> Ror(1)` live from executed fetch sites, and
+//! this module is the executable form of exactly those chains —
+//! `encrypt` replays a chain, `decrypt` replays its inverse.
+//! Chain alphabet matches x86 byte-ALU semantics (wrapping add/sub,
+//! xor, rotates, not/neg, bswap, inc/dec), verified against traced
+//! fetch bytes (`mine-hits` cross-checks).
 
 use serde::{Deserialize, Serialize};
 
+/// One chain operation. Semantics follow the x86 instruction of the
+/// same name at the chain's operand width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CryptOp {
     Add,
@@ -20,6 +27,8 @@ pub enum CryptOp {
     Neg,
 }
 
+/// Operand width a chain operates at (3.x fetch chains are bytes;
+/// wider widths exist in other VM shapes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CryptSize {
     Byte,
@@ -47,17 +56,18 @@ impl CryptSize {
     }
 }
 
+/// One step of a chain: operation plus operand.
+/// Rotates take a rotation amount (byte range, applied mod width);
+/// Add/Sub/Xor take an immediate of operand width; the rest ignore it.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ValueCommand {
     pub op: CryptOp,
     pub size: CryptSize,
-    /// For Rol/Ror this is rotate amount (byte), for Add/Sub/Xor the immediate.
-    /// Inc/Dec/Not/Neg/Bswap ignore it (0).
     pub value: u64,
 }
 
 impl ValueCommand {
-    /// Inverse op used during Decrypt (leak `ValueCommand::type(true)`).
+    /// Decryption runs every step's inverse in reverse order.
     fn inverse(&self) -> CryptOp {
         match self.op {
             CryptOp::Add => CryptOp::Sub,
@@ -74,17 +84,14 @@ impl ValueCommand {
         let op = if decrypt { self.inverse() } else { self.op };
         let mask = self.size.mask();
         let bits = self.size.bits();
-        // keep only size-relevant bits for the value operand where needed
         let imm = self.value & mask;
         v &= mask;
         let res = match op {
             CryptOp::Add | CryptOp::Inc => {
-                let add = if op == CryptOp::Inc { 1 } else { imm };
-                v.wrapping_add(add) & mask
+                v.wrapping_add(if op == CryptOp::Inc { 1 } else { imm }) & mask
             }
             CryptOp::Sub | CryptOp::Dec => {
-                let sub = if op == CryptOp::Dec { 1 } else { imm };
-                v.wrapping_sub(sub) & mask
+                v.wrapping_sub(if op == CryptOp::Dec { 1 } else { imm }) & mask
             }
             CryptOp::Xor => (v ^ imm) & mask,
             CryptOp::Not => (!v) & mask,
@@ -104,7 +111,6 @@ impl ValueCommand {
                 if r == 0 { v } else { ((v >> r) | (v << (bits - r))) & mask }
             }
         };
-        // preserve upper bits of original for QWord? For smaller sizes we already masked.
         res & mask
     }
 
@@ -116,6 +122,8 @@ impl ValueCommand {
     }
 }
 
+/// An ordered chain; `encrypt` replays forward, `decrypt` replays the
+/// inverse chain backward.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ValueCryptor {
     pub size: CryptSize,
@@ -131,46 +139,26 @@ impl ValueCryptor {
         Self { size, cmds: Vec::new() }
     }
     pub fn add(&mut self, op: CryptOp, value: u64) {
-        // Keep size of command consistent with cryptor size, but
-        // Rol/Ror immediate is always byte-sized in the leak.
-        let sz = match op {
-            CryptOp::Rol | CryptOp::Ror => CryptSize::Byte,
-            _ => self.size,
-        };
-        // Store value truncated to size (except Rol/Ror where value is rotate amount)
+        // Rotation applies at the operand width; only the *amount* is a
+        // byte (x86 semantics: amount mod width).
         let v = match op {
             CryptOp::Rol | CryptOp::Ror => value & 0xFF,
             CryptOp::Add | CryptOp::Sub | CryptOp::Xor => value & self.size.mask(),
             _ => 0,
         };
-        self.cmds.push(ValueCommand { op, size: sz, value: v });
+        self.cmds.push(ValueCommand { op, size: self.size, value: v });
     }
-
     pub fn encrypt(&self, mut v: u64) -> u64 {
         for c in &self.cmds {
-            v = c.encrypt(v);
-            // keep truncated to cryptor size after each step (leak does)
-            v &= self.size.mask();
+            v = c.apply(v, false);
         }
-        v
+        v & self.size.mask()
     }
     pub fn decrypt(&self, mut v: u64) -> u64 {
         for c in self.cmds.iter().rev() {
-            v = c.decrypt(v);
-            v &= self.size.mask();
+            v = c.apply(v, true);
         }
-        v
-    }
-
-    /// Build from the per-site chain we observed via Unicorn.
-    /// Example: `xor al,bpl; add al,0xa1; neg al; inc al; xor al,1` -> sequence
-    /// of ValueCommands that reproduces the same transform.
-    pub fn from_ops(size: CryptSize, ops: &[(CryptOp, u64)]) -> Self {
-        let mut c = Self::new(size);
-        for (op, v) in ops {
-            c.add(*op, *v);
-        }
-        c
+        v & self.size.mask()
     }
 }
 
@@ -193,15 +181,13 @@ mod tests {
 
     #[test]
     fn rbx_family_chain() {
-        // Verified 0x1401989e9: xor cl,r11b; inc cl; xor cl,6; rol cl,1; inc cl
-        // as ValueCryptor Byte: Xor(key), Inc, Xor(6), Rol(1), Inc
-        // We test the fixed part without key (key is separate xor)
+        // Mined live: Inc, Xor(6), Rol(1), Inc on the key-mixed byte.
+        // raw=0x3e key=0xf6 => byte ^ key = 0xc8
         let mut cr = ValueCryptor::new(CryptSize::Byte);
         cr.add(CryptOp::Inc, 0);
         cr.add(CryptOp::Xor, 6);
         cr.add(CryptOp::Rol, 1);
         cr.add(CryptOp::Inc, 0);
-        // raw=0x3e key=0xf6 => byte ^ key = 0xc8
         let raw = 0x3eu64;
         let key = 0xf6u64;
         let x = raw ^ key;
@@ -216,5 +202,31 @@ mod tests {
         cr.add(CryptOp::Bswap, 0);
         assert_eq!(cr.encrypt(0x11223344), 0x44332211);
         assert_eq!(cr.decrypt(0x44332211), 0x11223344);
+    }
+
+    #[test]
+    fn rol_ror_wide_widths() {
+        // Rotation applies at operand width (amount stays a byte).
+        let mut cr32 = ValueCryptor::new(CryptSize::DWord);
+        cr32.add(CryptOp::Rol, 8);
+        assert_eq!(cr32.cmds[0].apply(0x11223344, false), 0x22334411);
+        let mut cr64 = ValueCryptor::new(CryptSize::QWord);
+        cr64.add(CryptOp::Ror, 8);
+        assert_eq!(cr64.cmds[0].apply(0x1122334455667788, false), 0x8811223344556677);
+        let mut cr16 = ValueCryptor::new(CryptSize::Word);
+        cr16.add(CryptOp::Rol, 4);
+        assert_eq!(cr16.cmds[0].apply(0x1234, false), 0x2341);
+        // roundtrips at every width (byte-facing entry points)
+        for (sz, v) in [(CryptSize::Byte, 0xabu64),
+                        (CryptSize::Word, 0xabcd),
+                        (CryptSize::DWord, 0xabcdef01),
+                        (CryptSize::QWord, 0xabcdef0123456789)] {
+            let mut c = ValueCryptor::new(sz);
+            c.add(CryptOp::Rol, 3);
+            c.add(CryptOp::Xor, 0x5a);
+            let e = c.cmds.iter().fold(v & sz.mask(), |a, x| x.apply(a, false));
+            let d = c.cmds.iter().rev().fold(e, |a, x| x.apply(a, true));
+            assert_eq!(d & sz.mask(), v & sz.mask());
+        }
     }
 }

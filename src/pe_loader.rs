@@ -94,10 +94,17 @@ impl PEBinary {
         for section in &pe.sections {
             let section_start = image_base + section.virtual_address as u64;
             let section_end = section_start + section.virtual_size as u64;
-            
+
             if va >= section_start && va < section_end {
                 let offset = va - section_start;
-                return Ok(section.pointer_to_raw_data as usize + offset as usize);
+                let file_off = section.pointer_to_raw_data as usize + offset as usize;
+                // Bound against raw size (packed sections report virtual
+                // sizes far beyond file data; unmapped regions are zeros,
+                // not neighboring file bytes).
+                if file_off + 1 > section.pointer_to_raw_data as usize + section.size_of_raw_data as usize {
+                    anyhow::bail!("VA {:#x} has no file backing", va)
+                }
+                return Ok(file_off);
             }
         }
 

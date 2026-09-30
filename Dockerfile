@@ -13,4 +13,4 @@ WORKDIR /root/vmp-devirt
 # Remill (optional backend): build separately, point REMILL_LIFT at it.
 #   git clone https://github.com/lifting-bits/remill /root/remill && ...
 RUN cargo build --release
-CMD ["./target/release/vmp-devirt", "--help"]
+CMD ["./target/release/devirt", "--help"]
