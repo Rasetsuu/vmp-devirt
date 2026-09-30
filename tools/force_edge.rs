@@ -35,6 +35,42 @@ fn main() -> anyhow::Result<()> {
     let eflags: u64 = std::env::var("EFLAGS").map(|v| u64::from_str_radix(v.trim().trim_start_matches("0x"), 16).unwrap_or(0x202)).unwrap_or(0x202);
     let bound: u64 = std::env::var("BOUND").map(|v| v.parse().unwrap_or(30000000)).unwrap_or(30000000);
     let max_forces: usize = std::env::var("FORCES").map(|v| v.parse().unwrap_or(usize::MAX)).unwrap_or(usize::MAX);
+    // State perturbation (idea 4): PERTURB="rsi=0x10,rbp=0x20" writes regs
+    // when force_site hits, *before* any RIP override. PERTURB_ONLY=1
+    // skips the override (pure perturbation run).
+    fn reg_by_name(n: &str) -> Option<RegisterX86> {
+        Some(match n {
+            "rax" => RegisterX86::RAX, "rbx" => RegisterX86::RBX,
+            "rcx" => RegisterX86::RCX, "rdx" => RegisterX86::RDX,
+            "rsi" => RegisterX86::RSI, "rdi" => RegisterX86::RDI,
+            "rbp" => RegisterX86::RBP, "rsp" => RegisterX86::RSP,
+            "r8" => RegisterX86::R8, "r9" => RegisterX86::R9,
+            "r10" => RegisterX86::R10, "r11" => RegisterX86::R11,
+            "r12" => RegisterX86::R12, "r13" => RegisterX86::R13,
+            "r14" => RegisterX86::R14, "r15" => RegisterX86::R15,
+            _ => return None,
+        })
+    }
+    let perturb: Vec<(RegisterX86, u64)> = std::env::var("PERTURB").ok()
+        .map(|s| {
+            s.split(',').filter_map(|kv| {
+                let mut it = kv.split('=');
+                let r = reg_by_name(it.next()?.trim())?;
+                let v = u64::from_str_radix(it.next()?.trim().trim_start_matches("0x"), 16).ok()?;
+                Some((r, v))
+            }).collect()
+        })
+        .unwrap_or_default();
+    let perturb_only = std::env::var("PERTURB_ONLY").is_ok();
+    // Perturbation fires at PERTURB_SITE (default: force_site). It must
+    // predate the flag-writing instruction: by branch time the flags
+    // are latched and reg writes no longer matter.
+    let perturb_site: u64 = std::env::var("PERTURB_SITE")
+        .map(|v| u64::from_str_radix(v.trim().trim_start_matches("0x"), 16).unwrap_or(force_site))
+        .unwrap_or(force_site);
+    if !perturb.is_empty() {
+        eprintln!("perturb on {:#x}: {} regs{}", force_site, perturb.len(), if perturb_only { " (no rip override)" } else { "" });
+    }
     let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/home/ciupix/RE/vmp-research/data".to_string());
     // Derailment guard: baseline-known address set + consecutive-unknown budget.
     let known: std::collections::HashSet<u64> = std::env::var("KNOWN_BIN").ok()
@@ -148,6 +184,9 @@ fn main() -> anyhow::Result<()> {
     let u = unknown_run.clone();
     let derailed = std::sync::Arc::new(std::sync::Mutex::new(false));
     let d = derailed.clone();
+    let pert = perturb.clone();
+    let pert_only = perturb_only;
+    let pert_site = perturb_site;
     let mut count = 0u64;
     let hook = emu.add_code_hook(1, 0, move |emu, addr, _size| {
         count += 1;
@@ -165,6 +204,20 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        // State perturbation at PERTURB_SITE (must predate the
+        // flag-writer; by branch time flags are latched).
+        if addr == pert_site && !pert.is_empty() {
+            let n = *f.lock().unwrap();
+            if n < max_forces {
+                for (r, v) in &pert {
+                    let _ = emu.reg_write(*r, *v);
+                }
+                *f.lock().unwrap() += 1;
+                if pert_only {
+                    return;
+                }
+            }
+        }
         if addr == force_site {
             let n = *f.lock().unwrap();
             if n < max_forces {
@@ -178,8 +231,10 @@ fn main() -> anyhow::Result<()> {
                     p.lock().unwrap().push((rsi, rbp, code_hex));
                 }
                 *f.lock().unwrap() += 1;
-                let _ = emu.reg_write(RegisterX86::RIP, force_target);
-                return;
+                if !pert_only {
+                    let _ = emu.reg_write(RegisterX86::RIP, force_target);
+                    return;
+                }
             }
         }
         if count > bound {
@@ -209,7 +264,8 @@ fn main() -> anyhow::Result<()> {
     std::fs::write(format!("{}/forced.json", dir), &js)?;
     let uniq: std::collections::BTreeSet<u64> = trace.iter().cloned()
         .filter(|a| (0x140000000u64..0x143000000u64).contains(a)).collect();
-    println!("forced {}x {:#x} -> {:#x}: steps={} uniq={} end={:#x} derailed={} res={}",
-        nforces, force_site, force_target, trace.len(), uniq.len(), end_rip, was_derailed, res_str);
+    println!("forced {}x {:#x} -> {:#x}: steps={} uniq={} end={:#x} derailed={} res={}{}",
+        nforces, force_site, force_target, trace.len(), uniq.len(), end_rip, was_derailed, res_str,
+        if perturb_only { " [perturb-only, no rip override]" } else { "" });
     Ok(())
 }
