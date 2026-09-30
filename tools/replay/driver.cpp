@@ -106,7 +106,9 @@ int main(int argc, char **argv) {
   replay_register(&m);
   // start: first lifted block in baseline trace order (entry stub itself
   // is unlifted; tracer-equivalent init makes mid-VM start valid)
-  uint64_t pc = kEntry, steps = 0, missing = 0;
+  uint64_t pc = kEntry, missing = 0;
+  // volatile: longjmp bypasses normal flow; a cached counter would stale.
+  volatile uint64_t steps = 0;
   const char *tracepath = argc > 3 ? argv[3] : getenv("REPLAY_TRACE");
   {
     FILE *t = tracepath ? fopen(tracepath, "rb") : nullptr;
