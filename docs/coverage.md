@@ -146,7 +146,7 @@ yield disjoint code. Promotion: 61 static fetch candidates in new
 code, **35/61 mine** with zero new rules.
 Derailment is nondeterministic scribble run-to-run (63 vs 1.6M same
 command) — the guard keeps the deterministic prefix and drops chaos.
-745 sites remain unforged (1050–1350 gap batch running).
+445 sites remain unforged.
 Promotion scan found **0** fetch sites in new code: final-dump bytes
 are the wrong source (SMC re-encrypted). Answered by live capture:
 `force_edge` now records 256B at each force target into
