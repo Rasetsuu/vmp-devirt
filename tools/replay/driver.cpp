@@ -118,6 +118,13 @@ int main(int argc, char **argv) {
   wreg(st, O_RIP, pc);
   FILE *log = fopen("replay_pcs.bin", "wb");
   FILE *rlog = fopen("replay_regs.bin", "wb");
+  // Unbuffered: a crash must not leave pcs/regs/edges tails ragged
+  // (different loss per file breaks leg alignment).
+  if (log) setvbuf(log, nullptr, _IONBF, 0);
+  if (rlog) setvbuf(rlog, nullptr, _IONBF, 0);
+  // format tag: magic + regs-per-leg (py side verifies, skew fails loud)
+  const uint64_t kFmt[2] = {0x5247455230303032ULL, 18};
+  if (rlog) fwrite(kFmt, 8, 2, rlog);
   void *mem = nullptr;
   static const uint64_t kROff[] = {O_RAX,O_RBX,O_RCX,O_RDX,O_RSI,O_RDI,O_RBP,O_RSP,O_R8,O_R9,O_R10,O_R11,O_R12,O_R13,O_R14,O_R15,O_RIP};
   // FNV-1a over 32KB above rsp (live stack/vctx window) plus the
