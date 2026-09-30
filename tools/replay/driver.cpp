@@ -179,6 +179,13 @@ int main(int argc, char **argv) {
          (unsigned long)steps, (unsigned long)stepno, (unsigned long)missing,
          (unsigned long)stub_last(),
          (unsigned long)rreg(st, O_RAX), (unsigned long)pc);
+  // End-state page dumps for byte-exact diffing (small, diagnostic).
+  {
+    FILE *a = fopen("end_stack.bin", "wb");
+    FILE *b = fopen("end_pool.bin", "wb");
+    if (a) { fwrite((void *)0x7FF00000, 1, 0x100000, a); fclose(a); }
+    if (b) { fwrite((void *)0x140002000, 1, 0x3000, b); fclose(b); }
+  }
   // End-state hashes: full mapped ranges (sections + heap + staged +
   // stack + pool). Two runs that truly finished the same program agree
   // on all of them; anything less is a different end.
