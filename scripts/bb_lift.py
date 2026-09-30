@@ -33,8 +33,12 @@ def main():
                 print("  lift fail %s: %s" % (vas, r.stderr.decode()[:120]))
                 fail += 1
                 continue
-            if "remill_error(ptr" in open(ll).read():
-                print("  lift error-tail %s" % vas)
+            body = open(ll).read()
+            # Error *calls* that share the function with normal returns
+            # are faithful fault paths (e.g. div-by-zero guards) — keep.
+            # Fail only when the block cannot return normally at all.
+            if "call ptr @__remill_error" in body and "ret ptr" not in body:
+                print("  lift no-return %s" % vas)
                 fail += 1
                 continue
             subprocess.run(["opt", "-O3", "-S", ll, "-o", ll + ".bc"],
