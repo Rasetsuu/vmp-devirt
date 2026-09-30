@@ -14,6 +14,7 @@ using Fn = void *(*)(void *, uint64_t, void *);
 #include "tables.h"
 #include "dispatch.h"
 #include "vmjump.h"
+#include "iat.h"
 #include <signal.h>
 extern "C" void replay_register(void *);
 extern "C" uint64_t replay_missing(void);
@@ -85,6 +86,33 @@ int main(int argc, char **argv) {
   if (mmap(0, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC,
            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) != MAP_FAILED) {
     *(uint8_t *)0 = 0xC3;  // ret page like tracer
+  }
+  // Import stubs in scratch (tracer parity): heap-ret, zero-ret,
+  // fixed-time-ret; poke IAT slots from the generated table.
+  {
+    uint8_t *sh = (uint8_t *)0x70000000, *sz = (uint8_t *)0x70000010,
+            *st = (uint8_t *)0x70000020;
+    // mov rax,heap_base; ret | xor eax,eax; ret | mov [rcx],FIXED; ret
+    uint64_t heap = 0x71000000;
+    memcpy(sh, "\x48\xB8", 2); memcpy(sh + 2, &heap, 8); sh[10] = 0xC3;
+    memcpy(sz, "\x31\xC0\xC3", 3);
+    uint32_t fix = 0x4C4B4000;
+    memcpy(st, "\x48\xC7\x01", 3); memcpy(st + 3, &fix, 4); st[7] = 0xC3;
+    for (auto &e : kIAT) {
+      // Map the slot page if outside the image (packed IAT elsewhere).
+      bool in_image = false;
+      for (auto &s : kSecs) {
+        if (e.slot >= s.va && e.slot + 8 <= s.va + s.size) { in_image = true; break; }
+      }
+      if (!in_image) {
+        uint64_t pg = e.slot & ~0xFFFULL;
+        mmap((void *)pg, 0x1000, PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+      }
+      uint64_t tgt = (e.kind == 1) ? 0x70000000ULL
+                   : (e.kind == 2) ? 0x70000020ULL : 0x70000010ULL;
+      memcpy((void *)e.slot, &tgt, 8);
+    }
   }
   // state (tracer-equivalent init)
   uint8_t *st = (uint8_t *)calloc(1, 8192);

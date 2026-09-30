@@ -58,6 +58,38 @@ with open(OUT + "/tables.h", "w") as f:
     f.write("static const uint64_t kEntry = 0x%x;\n" % entry)
     f.write("static const uint64_t kPool = 0x%x;\n" % (entries[0][0] + 0x1000))
 
+# Import slot table for stub poking (driver mirrors tracer rules).
+# kind: 0 = zero-ret, 1 = heap-ret, 2 = time-stub.
+HEAPISH = ("Alloc", "Heap", "Virtual", "malloc", "Global", "Local", "MapView")
+with open(OUT + "/iat.h", "w") as f:
+    f.write("// generated: import slot -> stub kind (0 zero, 1 heap, 2 time)\n")
+    f.write("static const struct { uint64_t slot; unsigned kind; } kIAT[] = {\n")
+    n = 0
+    try:
+        for e in pe.DIRECTORY_ENTRY_IMPORT:
+            for fn in e.imports:
+                if not fn.name:
+                    continue
+                name = fn.name.decode()
+                va = fn.address  # pefile gives the slot VA directly
+                if name in ("GetSystemTimeAsFileTime",):
+                    kind = 2
+                elif name in ("LocalAlloc", "VirtualAlloc"):
+                    kind = 1
+                elif name == "GetProcAddress":
+                    kind = 0  # tracer logs+traps; replay returns 0 (same rax)
+                elif any(k in name for k in HEAPISH):
+                    kind = 1
+                else:
+                    kind = 0
+                f.write("  {0x%x, %d},  // %s\n" % (va, kind, name))
+                n += 1
+    except Exception as ex:
+        f.write("  // no import dir: %s\n" % ex)
+    f.write("};\n")
+    print("iat slots:", n)
+print("wrote tables.h dispatch.h iat.h sections.bin", len(blob), "bytes")
+
 with open(OUT + "/dispatch.h", "w") as f:
     f.write("// generated: VA -> lifted fn decls\n")
     for va in vas:
