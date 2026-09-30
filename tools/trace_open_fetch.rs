@@ -122,6 +122,21 @@ fn main() -> anyhow::Result<()> {
                     if *off < end { let _ = emu.mem_write(*va, &bin.data[*off..end]); }
                 }
             }
+            // RVA alias mapping (ALIAS_RVA=1): some protectors (3.8.1)
+            // dispatch by RVA (image-base independent). Aliasing lets
+            // raw-RVA jumps land in real code. Overlaps fail silently.
+            if std::env::var("ALIAS_RVA").is_ok() {
+                for (va, off, rawsz, vsize, _n) in &vmp_sections {
+                    let rva = va.wrapping_sub(base);
+                    if rva == *va { continue; }
+                    let mapped = ((vsize + 0xfff) & !0xfff) as u64;
+                    if emu.mem_map(rva, mapped, Prot::ALL).is_ok() && *rawsz > 0 {
+                        let end = (*off + *rawsz).min(bin.data.len());
+                        if *off < end { let _ = emu.mem_write(rva, &bin.data[*off..end]); }
+                    }
+                }
+                eprintln!("  RVA alias mapping on");
+            }
             let sparse_hi: u64 = std::env::var("SPARSE_HI").map(|v| u64::from_str_radix(v.trim().trim_start_matches("0x"), 16).unwrap_or(0x80000000)).unwrap_or(0x80000000);
             for b in (0x100000u64..sparse_hi).step_by(0x100000) { let _ = emu.mem_map(b, 0x100000, Prot::ALL); }
             // Zero page with `ret`: unbound IAT calls (target 0) return cleanly.
