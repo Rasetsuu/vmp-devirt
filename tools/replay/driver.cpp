@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <zlib.h>
 
 using Fn = void *(*)(void *, uint64_t, void *);
 #include "tables.h"
@@ -130,7 +131,6 @@ int main(int argc, char **argv) {
   // adler32 over the FULL 1MB stack page (loop-carried frame slots live
   // below rsp, outside any rsp-relative window) plus image pool slots.
   // (zlib-speed: FNV in driver was fine, but the oracle side is Python.)
-#include <zlib.h>
   auto stackhash = [&]() -> uint64_t {
     uLong a = adler32(0L, Z_NULL, 0);
     a = adler32(a, (const Bytef *)0x7FF00000, 0x100000);
