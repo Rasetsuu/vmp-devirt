@@ -7,7 +7,7 @@ reproduce with your own licensed samples.
 ## Function coverage (VMP 3.9.4 Virtualization, default)
 
 | Binary | Entry | Hits | End RIP | Note |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
 | vmp_add2 | 0x14077c26d | 2000+ | 0x140f09452 / crash 0x0 (CF=1) | baseline, 90614 uniq, 6.7M steps |
 | vmp_sub2 | 0x14076a131 | 1 (+trace 6.8M steps) | 0x0 READ_UNMAPPED | 88173 uniq, 86125 sub-only |
 | vmp_branches | 0x140cd5da1 | 424 | 0x140edd5ba Ok | distinct function |
@@ -163,7 +163,7 @@ add2_dyn still 2/5.
 each, capped at display). `devirt mine` on 40-site samples (static
 bytes; `mine` also accepts movsx — SMC flips B6↔BE):
 
-| Mode | v1 | v2 (call-follow) | v3 (and-mix) | Key regs (v3) |
+| Mode | v1 | v2 (call) | v3 (and-mix) | v4 (jmp-bridge) | Key regs |
 |---|---|---|---|---|
 | add2 (Virt) | 22 | 25 | 25 | **25** | r10l, dil, r11l |
 | Mutation | 20 | 20 | 24 | **25** | sil, bl, dil&, r8l |
