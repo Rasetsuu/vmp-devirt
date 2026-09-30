@@ -140,19 +140,21 @@ int main(int argc, char **argv) {
     return (uint64_t)a;
   };
   uint64_t stepno = 0;
+  // volatile: longjmp bypasses normal flow; cached counter would go stale.
+  volatile uint64_t steps = 0;
   for (; steps < bound; steps++, stepno++) {
     g_step = stepno;
     auto it = m.find(pc);
     if (it == m.end()) { missing = pc; break; }
     if (log) { uint64_t v = pc; fwrite(&v, 8, 1, log); }
     if (rlog) { for (unsigned k = 0; k < 17; k++) { uint64_t v = rreg(st, kROff[k]); fwrite(&v, 8, 1, rlog); } uint64_t sh = stackhash(); fwrite(&sh, 8, 1, rlog); }
-    try {
-      it->second(st, pc, mem);
-    } catch (VMJump &j) {
-      pc = j.target;
+    if (setjmp(g_jmpbuf) != 0) {
+      // trampoline bounce: continue at pending target
+      pc = g_pending;
       wreg(st, O_RIP, pc);
       continue;
     }
+    it->second(st, pc, mem);
     pc = rreg(st, O_RIP);
     if (pc == 0) { missing = stub_last(); break; }  // unlifted direct target
   }

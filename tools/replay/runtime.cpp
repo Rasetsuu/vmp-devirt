@@ -86,25 +86,26 @@ extern "C" Memory *__remill_error(void *, uint64_t addr, Memory *m) {
   exit(3);
   return m;
 }
-extern "C" Memory *__remill_missing_block(void *st, uint64_t addr, Memory *m) {
+static Memory *bounce(void *st, uint64_t addr, Memory *m) {
   (void)m;
   log_edge(get_rip(st), addr);
-  throw VMJump{addr};
+  g_pending = addr;
+  longjmp(g_jmpbuf, 1);
+  return m;
+}
+jmp_buf g_jmpbuf;
+uint64_t g_pending;
+extern "C" Memory *__remill_missing_block(void *st, uint64_t addr, Memory *m) {
+  return bounce(st, addr, m);
 }
 extern "C" Memory *__remill_jump(void *st, uint64_t addr, Memory *m) {
-  (void)m;
-  log_edge(get_rip(st), addr);
-  throw VMJump{addr};
+  return bounce(st, addr, m);
 }
 extern "C" Memory *__remill_function_call(void *st, uint64_t addr, Memory *m) {
-  (void)m;
-  log_edge(get_rip(st), addr);
-  throw VMJump{addr};
+  return bounce(st, addr, m);
 }
 extern "C" Memory *__remill_function_return(void *st, uint64_t addr, Memory *m) {
-  (void)m;
-  log_edge(get_rip(st), addr);
-  throw VMJump{addr};
+  return bounce(st, addr, m);
 }
 extern "C" Memory *__remill_barrier_store_load(Memory *m) { return m; }
 extern "C" Memory *__remill_barrier_load_load(Memory *m) { return m; }
