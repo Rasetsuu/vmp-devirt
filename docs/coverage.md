@@ -163,12 +163,16 @@ add2_dyn still 2/5.
 each, capped at display). `devirt mine` on 40-site samples (static
 bytes; `mine` also accepts movsx — SMC flips B6↔BE):
 
-| Mode | v1 | v2 (call) | v3 (and-mix) | v4 (jmp-bridge) | Key regs |
-|---|---|---|---|---|---|
-| add2 (Virt) | 22 | 25 | 25 | **25** | r10l, dil, r11l |
-| Mutation | 20 | 20 | 24 | **25** | sil, bl, dil&, r8l |
-| Ultra | 28 | 28 | 30 | **32** | r10l, sil, dil, bpl |
-| Virtualization | 29 | 29 | 31 | **32** | r9l, sil, r8l, r11l |
+| Mode | v1 | v4 | v5 (identity-filtered) | Key regs |
+|---|---|---|---|---|
+| add2 (Virt) | 22 | 25 | **23** | r10l, dil, r11l |
+| Mutation | 20 | 25 | **21** | sil, bl, dil&, r8l |
+| Ultra | 28 | 32 | **29** | r10l, sil, dil, bpl |
+| Virtualization | 29 | 32 | **29** | r9l, sil, r8l, r11l |
+
+v5 drops junk identity chains (fewer, truer — the verified rate).
+`devirt synth`: simplification check over mined chains — 19/19 agree,
+1 compressible (3→1, down from 5) — miner output now near-minimal.
 
 Unmined remainder: encrypted-handler bytes (no chain visible
 statically) + deep call-hidden shapes — live mining
