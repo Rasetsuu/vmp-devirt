@@ -4,3 +4,7 @@
 *.ll
 *.bc
 *.o
+tools/replay/replay
+replay_pcs.bin
+replay_regs.bin
+replay_edges.bin
