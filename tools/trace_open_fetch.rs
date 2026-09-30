@@ -151,20 +151,32 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 // Synthetic import stubs in scratch + IAT poke (.vmp0 IAT is zero on disk).
-                // stub_heap: mov rax,heap_base; ret — serves LocalAlloc.
+                // stub_heap: bump allocator — rax=cur; cur+=(rdx+15)&~15; ret.
+                // (Constant-heap aliases every allocation; bump keeps them distinct.)
                 // stub_zero: xor eax,eax; ret — LoadLibraryA/GetProcAddress/Sleep.
                 let stub_heap = 0x70000000u64;
-                let stub_zero = 0x70000010u64;
+                let stub_zero = 0x70000040u64;
                 let heap_base = 0x71000000u64;
-                let _ = emu.mem_write(stub_heap, &[0x48u8, 0xB8, 0,0,0,0,0,0,0,0, 0xC3]);
-                let _ = emu.mem_write(stub_heap + 2, &heap_base.to_le_bytes());
+                {
+                    // mov rax,[rel cur]; lea rcx,[rdx+15]; and rcx,-16; add [rel cur],rcx; ret; cur: dq base
+                    let cur = stub_heap + 32;
+                    let mut c = vec![0x48u8, 0x8B, 0x05];
+                    c.extend_from_slice(&((cur - (stub_heap + 7)) as u32).to_le_bytes());
+                    c.extend_from_slice(&[0x48, 0x8D, 0x4A, 0x0F, 0x48, 0x83, 0xE1, 0xF0]);
+                    c.extend_from_slice(&[0x48, 0x01, 0x0D]);
+                    c.extend_from_slice(&((cur - (stub_heap + 22)) as u32).to_le_bytes());
+                    c.push(0xC3);
+                    while c.len() < 32 { c.push(0x90); }
+                    let _ = emu.mem_write(stub_heap, &c);
+                    let _ = emu.mem_write(cur, &heap_base.to_le_bytes());
+                }
                 let _ = emu.mem_write(stub_zero, &[0x31u8, 0xC0, 0xC3]);
                 let _ = emu.mem_map(heap_base, 0x100000, Prot::ALL);
                 // stub_time: mov qword [rcx], FIXED; ret (GetSystemTimeAsFileTime).
-                let stub_time = 0x70000020u64;
+                let stub_time = 0x70000050u64;
                 let _ = emu.mem_write(stub_time, &[0x48u8, 0xC7, 0x01, 0x00, 0x40, 0x4B, 0x4C, 0xC3]);
                 // Const stubs: mov rax, imm64; ret (11 bytes each).
-                let mut stub_cur = 0x70000040u64;
+                let mut stub_cur = 0x70000080u64;
                 let mut const_jobs: Vec<(String, u64, u64)> = Vec::new();
                 for (name, val) in [("GetCurrentProcess", 0xFFFFFFFFFFFFFFFFu64),
                                     ("GetCurrentThread", 0xFFFFFFFFFFFFFFFEu64),
