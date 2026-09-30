@@ -141,6 +141,8 @@ int main(int argc, char **argv) {
     return (uint64_t)adler32(a, (const Bytef *)p, n);
   };
   uint64_t stepno = 0;
+  uint64_t dump_at = 0;
+  if (const char *e = getenv("LEG_DUMP")) dump_at = strtoull(e, nullptr, 0);
   for (; steps < bound; steps++, stepno++) {
     g_step = stepno;
     auto it = m.find(pc);
@@ -160,6 +162,12 @@ int main(int argc, char **argv) {
       pc = g_pending;
       wreg(st, O_RIP, pc);
       continue;
+    }
+    if (dump_at && stepno == dump_at) {
+      FILE *a = fopen("dump_stack.bin", "wb");
+      FILE *b = fopen("dump_pool.bin", "wb");
+      if (a) { fwrite((void *)0x7FF00000, 1, 0x100000, a); fclose(a); }
+      if (b) { fwrite((void *)0x140002000, 1, 0x3000, b); fclose(b); }
     }
     it->second(st, pc, mem);
     pc = rreg(st, O_RIP);

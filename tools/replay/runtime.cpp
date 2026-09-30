@@ -124,6 +124,9 @@ extern "C" Memory *__remill_sync_hyper_call(void *st, Memory *m, ...) {
   if (name == 0x103 || name == 0x104) {  // kX86ReadTSC/TSCP: host TSC
     unsigned lo, hi;  // (both worlds read real time; timing checks pass)
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    static FILE *tf;
+    if (!tf) { tf = fopen("replay_tsc.bin", "wb"); if (tf) setvbuf(tf, nullptr, _IONBF, 0); }
+    if (tf) { fwrite(&lo, 4, 1, tf); fwrite(&hi, 4, 1, tf); }
     wreg(2216, (rreg(2216) & ~0xffffffffULL) | lo);  // RAX
     wreg(2264, (rreg(2264) & ~0xffffffffULL) | hi);  // RDX
     return m;
