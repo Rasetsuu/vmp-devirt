@@ -56,6 +56,10 @@ heap, staged).
   4 differing bytes in 1MB+12KB hashed, timestamp-shaped on both
   sides. Everything else — regs, stack, pool, heap, staged — matches
   at every leg.
+- Edge alignment: **33922/33922 replay edges align as a subsequence
+  of baseline** (383794 baseline skips = inlined direct calls + loop
+  iterations; zero hard breaks) with IAT stubs installed — stubs
+  change nothing on import-free paths, as designed.
 - Retracted: the "loop-count divergence" (5 vs 884) compared replay's
   covered prefix against the whole 6.7M-step baseline; within the
   prefix both do 5. Same for several "divergence" alarms that turned
