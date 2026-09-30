@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstdarg>
 #include <unordered_map>
 
 #include "vmjump.h"
@@ -111,8 +112,32 @@ extern "C" Memory *__remill_barrier_load_store(Memory *m) { return m; }
 extern "C" Memory *__remill_barrier_store_store(Memory *m) { return m; }
 extern "C" Memory *__remill_atomic_begin(Memory *m) { return m; }
 extern "C" Memory *__remill_atomic_end(Memory *m) { return m; }
-extern "C" Memory *__remill_sync_hyper_call(void *, Memory *, ...) {
-  fprintf(stderr, "HYPERCALL\n");
+extern "C" Memory *__remill_sync_hyper_call(void *st, Memory *m, ...) {
+  va_list ap;
+  va_start(ap, m);
+  unsigned name = va_arg(ap, unsigned);
+  va_end(ap);
+  uint8_t *s = (uint8_t *)st;
+  auto wreg = [&](unsigned o, uint64_t v) { *(uint64_t *)(s + o) = v; };
+  auto rreg = [&](unsigned o) { return *(uint64_t *)(s + o); };
+  if (name == 0x103 || name == 0x104) {  // kX86ReadTSC/TSCP: host TSC
+    unsigned lo, hi;  // (both worlds read real time; timing checks pass)
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    wreg(2216, (rreg(2216) & ~0xffffffffULL) | lo);  // RAX
+    wreg(2264, (rreg(2264) & ~0xffffffffULL) | hi);  // RDX
+    return m;
+  }
+  if (name == 0x102) {  // kX86CPUID: host cpuid (same host both worlds)
+    uint32_t leaf = (uint32_t)rreg(2216), sub = (uint32_t)rreg(2264);
+    uint32_t a, b, c, d;
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(leaf), "c"(sub));
+    wreg(2216, (rreg(2216) & ~0xffffffffULL) | a);
+    wreg(2232, (rreg(2232) & ~0xffffffffULL) | b);
+    wreg(2264, (rreg(2264) & ~0xffffffffULL) | d);
+    wreg(2248, (rreg(2248) & ~0xffffffffULL) | c);
+    return m;
+  }
+  fprintf(stderr, "HYPERCALL %u\n", name);
   exit(4);
   return nullptr;
 }
