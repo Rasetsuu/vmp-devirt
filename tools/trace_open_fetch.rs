@@ -8,17 +8,12 @@ use unicorn_engine_sys::RegisterX86;
 fn main() -> anyhow::Result<()> {
     let binpath = std::env::var("BIN_PATH").unwrap_or_else(|_| "./target.exe".to_string());
     let bin = PEBinary::load(&binpath)?;
-    let pe = bin.parse_pe()?;
     let base = bin.image_base()?;
     // Map ALL sections (not just .vmp) so entry stub code/data resolve.
+    // Format-agnostic via map_sections (PE RVAs / ELF absolute addrs).
     let mut vmp_sections = Vec::new();
-    for s in &pe.sections {
-        let name = std::str::from_utf8(&s.name).unwrap_or("").trim_end_matches('\0');
-        // Map by virtual size (zero-filled); write file bytes where present.
-        // .vmp0/.text/.data are virtual-only (unpacked at runtime) — zero pages emulate pre-unpack state.
-        let vsize = std::cmp::max(s.virtual_size, s.size_of_raw_data) as usize;
-        if vsize == 0 { continue; }
-        vmp_sections.push((base + s.virtual_address as u64, s.pointer_to_raw_data as usize, s.size_of_raw_data as usize, vsize, name.to_string()));
+    for (name, va, off, rawsz, vsize) in bin.map_sections()? {
+        vmp_sections.push((va, off, rawsz, vsize, name));
     }
     println!("Sections: {:?}", vmp_sections.iter().map(|(va,_,rawsz,vsize,n)| format!("{} {:#x} virt{}KB raw{}KB", n, va, vsize/1024, rawsz/1024)).collect::<Vec<_>>());
     let start: u64 = std::env::args().nth(1).map(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).unwrap()).unwrap_or(0x140588eda);
@@ -263,11 +258,31 @@ fn main() -> anyhow::Result<()> {
                 let _ = emu.mem_map(ctx, 0x10000, Prot::ALL);
                 let _ = emu.mem_write(ctx, &0xe06d7363u32.to_le_bytes());
             }
+            // FRAME_INIT=1: real stack frame for frame-based VMs (ELF/Tigress).
+            // RBP=RSP=stack top so rbp-relative locals address real memory;
+            // RDI/RSI/... from ARGS="rdi=0x1,rsi=0x2" (function arguments).
+            // Default (unset) keeps the VMP forged-injector context.
+            let frame = std::env::var("FRAME_INIT").is_ok();
+            let mut argmap = std::collections::HashMap::new();
+            if let Ok(a) = std::env::var("ARGS") {
+                for kv in a.split(',') {
+                    let mut it = kv.split('=');
+                    if let (Some(k), Some(v)) = (it.next(), it.next()) {
+                        if let Ok(n) = u64::from_str_radix(v.trim().trim_start_matches("0x"), 16) {
+                            argmap.insert(k.trim().to_lowercase(), n);
+                        }
+                    }
+                }
+            }
+            let arg = |r: &str, dflt: u64| *argmap.get(r).unwrap_or(&dflt);
             for (r, v) in [(RegisterX86::RAX, pool_va), (RegisterX86::RBX, pool_va),
                            (RegisterX86::RCX, a_rcx), (RegisterX86::RDX, a_rdx),
-                           (RegisterX86::RSI, pool_va), (RegisterX86::RDI, pool_va),
-                           (RegisterX86::RBP, if dll_mode { 0x72000000u64 } else { key }), (RegisterX86::R8, a_r8),
-                           (RegisterX86::R9, pool_va), (RegisterX86::R10, pool_va),
+                           (RegisterX86::RSI, if frame { arg("rsi", 0) } else { pool_va }),
+                           (RegisterX86::RDI, if frame { arg("rdi", 0) } else { pool_va }),
+                           (RegisterX86::RBP, if dll_mode { 0x72000000u64 } else if frame { 0x7ffe0000u64 } else { key }),
+                           (RegisterX86::R8, if frame { arg("r8", 0) } else { a_r8 }),
+                           (RegisterX86::R9, if frame { arg("r9", 0) } else { pool_va }),
+                           (RegisterX86::R10, pool_va),
                            (RegisterX86::R11, key), (RegisterX86::RSP, 0x7ffe0000),
                            (RegisterX86::R12, if dll_mode { 0x72000000u64 } else { 0 }),
                            (RegisterX86::R13, if dll_mode { 0x72000000u64 } else { 0 }),
