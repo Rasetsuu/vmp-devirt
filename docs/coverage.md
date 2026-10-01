@@ -171,8 +171,12 @@ bytes; `mine` also accepts movsx — SMC flips B6↔BE):
 | Virtualization | 29 | 32 | **29** | r9l, sil, r8l, r11l |
 
 v5 drops junk identity chains (fewer, truer — the verified rate).
-`devirt synth`: simplification check over mined chains — 19/19 agree,
-1 compressible (3→1, down from 5) — miner output now near-minimal.
+`devirt synth`: simplification check over mined chains — 19/19 agree.
+VTIL-rule canonicalizer (ported linear subset of
+`VTIL-SymEx/simplifier/directives.hpp`, BSD-3, attributed in
+`src/backend/synth.rs::simplify_chain`) beats subset-deletion search
+on 3 sites (5→4, 4→3, 3→1 where search found nothing) — proof the
+rule donor carries weight past our lifter.
 
 Unmined remainder: encrypted-handler bytes (no chain visible
 statically) + deep call-hidden shapes — live mining
