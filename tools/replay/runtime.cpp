@@ -81,6 +81,9 @@ static inline void log_edge(uint64_t src, uint64_t dst) {
 uint64_t g_step;
 static uint64_t g_missing = 0;
 extern "C" uint64_t replay_missing(void) { return g_missing; }
+// Last trampoline target (unlifted direct edge / stub return). Declared
+// by the driver; previously only provided by an out-of-tree stubs.o.
+extern "C" uint64_t stub_last(void) { return g_missing; }
 extern "C" Memory *__remill_error(void *, uint64_t addr, Memory *m) {
   fprintf(stderr, "REMILL-ERROR at %#lx\n", (unsigned long)addr);
   exit(3);
@@ -90,6 +93,7 @@ static Memory *bounce(void *st, uint64_t addr, Memory *m) {
   (void)m;
   log_edge(get_rip(st), addr);
   g_pending = addr;
+  g_missing = addr;
   longjmp(g_jmpbuf, 1);
   return m;
 }

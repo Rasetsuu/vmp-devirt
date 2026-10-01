@@ -21,18 +21,38 @@ def main():
     d, out = sys.argv[1], sys.argv[2]
     raw = open(d + "/open_trace.bin", "rb").read()
     trs = struct.unpack("<%dQ" % (len(raw) // 8), raw)
-    exe = set(a for a in trs if 0x140000000 <= a < 0x142000000)
     bases = json.load(open(d + "/open_bases.json"))
+    # executable range from section manifest (PE 0x140… or ELF 0x40…,
+    # never hardcoded): code = sections whose bytes disassemble, i.e.
+    # any mapped base range except known data (stack/heap/staged).
+    ranges = []
+    for _tag, vs in bases.items():
+        v = int(vs, 16)
+        if 0x100000 <= v < 0x1000000000:
+            ranges.append(v)
+    ranges.sort()
+    lo, hi = (min(ranges), max(ranges) + 0x1000000) if ranges else (0x140000000, 0x142000000)
+    exe = set(a for a in trs if lo <= a < hi)
     imgs = []
     for f in os.listdir(d):
         if f.startswith("open_mem_") and f.endswith(".bin") and f[9:-4] in bases:
             imgs.append((int(bases[f[9:-4]], 16), open(d + "/" + f, "rb").read()))
 
     def rb(va, n):
-        for b, dd in imgs:
-            if b <= va < b + len(dd) and va - b + n <= len(dd):
-                return dd[va - b:va - b + n]
-        return None
+        # span-aware + best-effort: concatenate across adjacent snapshots,
+        # return what exists (blocks only need bytes to their first CF;
+        # all callers tolerate short/empty). Empty only if VA unmapped.
+        out = b""
+        while len(out) < n:
+            for b, dd in imgs:
+                if b <= va < b + len(dd):
+                    take = min(n - len(out), len(dd) - (va - b))
+                    out += dd[va - b:va - b + take]
+                    va += take
+                    break
+            else:
+                break
+        return out if out else None
 
     md = Cs(CS_ARCH_X86, CS_MODE_64)
     starts = {trs[0]}

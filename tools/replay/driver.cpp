@@ -8,6 +8,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <string>
+#include <vector>
+#include <utility>
 #include <zlib.h>
 
 using Fn = void *(*)(void *, uint64_t, void *);
@@ -16,6 +19,7 @@ using Fn = void *(*)(void *, uint64_t, void *);
 #include "vmjump.h"
 #include "iat.h"
 #include <signal.h>
+#include <dlfcn.h>
 extern "C" void replay_register(void *);
 extern "C" uint64_t replay_missing(void);
 extern "C" uint64_t stub_last(void);
@@ -64,12 +68,37 @@ int main(int argc, char **argv) {
     if (r == 0) break;
     fgot += r;
   }
+  // Mapped ranges merge: aligned ELF sections overlap arbitrarily.
+  // Subtract coverage, mmap only the gaps, merge into the list.
+  std::vector<std::pair<uint64_t, uint64_t>> done;
   for (auto &s : kSecs) {
-    void *p = mmap((void *)s.va, s.size, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-    if (p == MAP_FAILED) { perror("mmap sec"); return 1; }
-    memset(p, 0, s.size);
-    if (s.raw_len) memcpy(p, file + s.file_off, s.raw_len);
+    // Page-align once here (tables carry exact spans). ELF sections are
+    // not page-aligned; PE ones are (no-op there).
+    uint64_t base = s.va & ~0xFFFULL;
+    uint64_t end = (s.va + s.size + 0xFFF) & ~0xFFFULL;
+    std::vector<std::pair<uint64_t, uint64_t>> gaps = {{base, end}};
+    for (auto &d : done) {
+      std::vector<std::pair<uint64_t, uint64_t>> next;
+      for (auto &g : gaps) {
+        if (g.second <= d.first || g.first >= d.second) { next.push_back(g); continue; }
+        if (g.first < d.first) next.emplace_back(g.first, d.first);
+        if (g.second > d.second) next.emplace_back(d.second, g.second);
+      }
+      gaps.swap(next);
+    }
+    for (auto &g : gaps) {
+      void *p = mmap((void *)g.first, g.second - g.first, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+      if (p == MAP_FAILED) {
+        fprintf(stderr, "mmap sec fail va=%#lx [%#lx,%#lx)\n",
+                (unsigned long)s.va, (unsigned long)g.first, (unsigned long)g.second);
+        perror("mmap sec");
+        return 1;
+      }
+      memset((void *)g.first, 0, g.second - g.first);
+      done.emplace_back(g.first, g.second);
+    }
+    if (s.raw_len) memcpy((void *)(uintptr_t)s.va, file + s.file_off, s.raw_len);
   }
   // sparse scratch like the tracer (staged/heap/stack coverage).
   // Collisions are fatal: silent relocation would corrupt the guest map.
@@ -80,7 +109,7 @@ int main(int argc, char **argv) {
     }
     if (clash) continue;
     void *p = mmap((void *)b, 0x100000, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
     if (p == MAP_FAILED) { perror("mmap scratch"); return 1; }
   }
   if (mmap(0, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -109,8 +138,21 @@ int main(int argc, char **argv) {
         mmap((void *)pg, 0x1000, PROT_READ | PROT_WRITE,
              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
       }
-      uint64_t tgt = (e.kind == 1) ? 0x70000000ULL
-                   : (e.kind == 2) ? 0x70000020ULL : 0x70000010ULL;
+      uint64_t tgt;
+      if (e.kind == 3) {
+        // ELF GOT: resolve the real libc address (name in kGOT).
+        tgt = 0;
+        for (auto &g : kGOT) {
+          if (g.slot == e.slot) {
+            void *sym = dlsym(RTLD_DEFAULT, g.name);
+            if (sym) tgt = (uint64_t)sym;
+            else fprintf(stderr, "dlsym fail %s\n", g.name);
+            break;
+          }
+        }
+        if (!tgt) tgt = 0x70000010ULL;  // fall back to zero-ret
+      } else tgt = (e.kind == 1) ? 0x70000000ULL
+                 : (e.kind == 2) ? 0x70000020ULL : 0x70000010ULL;
       memcpy((void *)e.slot, &tgt, 8);
     }
   }
@@ -120,10 +162,31 @@ int main(int argc, char **argv) {
   signal(SIGSEGV, segv_dump);
   replay_init_mem();
   uint64_t pool = kPool;
-  wreg(st, O_RAX, pool); wreg(st, O_RBX, pool); wreg(st, O_RSI, pool);
-  wreg(st, O_RDI, pool); wreg(st, O_R8, pool); wreg(st, O_R9, pool);
+  // REPLAY_POOL overrides the pool-hash region (default: VMP image pool).
+  uint64_t poolreg = 0x140002000ULL, poolsz = 0x3000;
+  if (const char *e = getenv("REPLAY_POOL")) {
+    poolreg = strtoull(e, nullptr, 0);
+    if (const char *c = strchr(e, ',')) poolsz = strtoull(c + 1, nullptr, 0);
+  }
+  // REPLAY_FRAME=1: real frame for frame-based VMs (rbp=rsp, args honored).
+  // REPLAY_ARGS="rdi=..,rsi=..,r8=..,r9=.." like the tracer ARGS.
+  bool frame = getenv("REPLAY_FRAME") != nullptr;
+  auto arg = [](const char *k, uint64_t dflt) -> uint64_t {
+    const char *e = getenv("REPLAY_ARGS");
+    if (!e) return dflt;
+    std::string s(e), key(k);
+    size_t p = s.find(key + "=");
+    if (p == std::string::npos) return dflt;
+    return strtoull(s.c_str() + p + key.size() + 1, nullptr, 0);
+  };
+  wreg(st, O_RAX, pool); wreg(st, O_RBX, pool);
+  wreg(st, O_RSI, frame ? arg("rsi", 0) : pool);
+  wreg(st, O_RDI, frame ? arg("rdi", 0) : pool);
+  wreg(st, O_R8, frame ? arg("r8", 0) : pool);
+  wreg(st, O_R9, frame ? arg("r9", 0) : pool);
   wreg(st, O_R10, pool); wreg(st, O_RCX, 0); wreg(st, O_RDX, 0);
-  wreg(st, O_RBP, 0x42); wreg(st, O_R11, 0x42); wreg(st, O_RSP, 0x7ffe0000);
+  wreg(st, O_RBP, frame ? 0x7ffe0000ULL : 0x42ULL);
+  wreg(st, O_R11, 0x42); wreg(st, O_RSP, 0x7ffe0000);
   wreg(st, O_R12, 0); wreg(st, O_R13, 0); wreg(st, O_R14, 0); wreg(st, O_R15, 0);
   // rflag.flat: remill SerializeFlags copies aflag fields but leaves
   // _if/must_be_1 untouched (see PUSH.cpp) — seed like real EFLAGS.
@@ -179,7 +242,7 @@ int main(int argc, char **argv) {
     if (rlog) {
       for (unsigned k = 0; k < 17; k++) { uint64_t v = rreg(st, kROff[k]); fwrite(&v, 8, 1, rlog); }
       uint64_t hs = reghash((uint8_t *)0x7FF00000, 0x100000);
-      uint64_t hp = reghash((uint8_t *)0x140002000, 0x3000);
+      uint64_t hp = reghash((uint8_t *)poolreg, (unsigned)poolsz);
       uint64_t hh = reghash((uint8_t *)0x71000000, 0x100000);
       uint64_t hg = reghash((uint8_t *)0x300000, 0x100000);
       fwrite(&hs, 8, 1, rlog); fwrite(&hp, 8, 1, rlog);
@@ -195,7 +258,7 @@ int main(int argc, char **argv) {
       FILE *a = fopen("dump_stack.bin", "wb");
       FILE *b = fopen("dump_pool.bin", "wb");
       if (a) { fwrite((void *)0x7FF00000, 1, 0x100000, a); fclose(a); }
-      if (b) { fwrite((void *)0x140002000, 1, 0x3000, b); fclose(b); }
+      if (b) { fwrite((void *)poolreg, 1, (size_t)poolsz, b); fclose(b); }
     }
     it->second(st, pc, mem);
     pc = rreg(st, O_RIP);
@@ -212,7 +275,7 @@ int main(int argc, char **argv) {
     FILE *a = fopen("end_stack.bin", "wb");
     FILE *b = fopen("end_pool.bin", "wb");
     if (a) { fwrite((void *)0x7FF00000, 1, 0x100000, a); fclose(a); }
-    if (b) { fwrite((void *)0x140002000, 1, 0x3000, b); fclose(b); }
+    if (b) { fwrite((void *)poolreg, 1, (size_t)poolsz, b); fclose(b); }
   }
   // End-state hashes: full mapped ranges (sections + heap + staged +
   // stack + pool). Two runs that truly finished the same program agree
@@ -224,7 +287,7 @@ int main(int argc, char **argv) {
     };
     printf("final stack=%#lx pool=%#lx heap=%#lx staged=%#lx\n",
            (unsigned long)rh((uint8_t *)0x7FF00000, 0x100000),
-           (unsigned long)rh((uint8_t *)0x140002000, 0x3000),
+           (unsigned long)rh((uint8_t *)poolreg, (unsigned)poolsz),
            (unsigned long)rh((uint8_t *)0x71000000, 0x100000),
            (unsigned long)rh((uint8_t *)0x300000, 0x100000));
     uint64_t him = 0;
