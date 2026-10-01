@@ -72,6 +72,11 @@ proof first, automation second, research arcs last.
 - Blocked on samples (no protectors for 1.x/2.x automation).
 
 ### 3.3 Second target family [STARTED, blocked; DIVERSITY PLAN ADDED]
+- Diversity experiment (priority when unblocked): a SECOND 3.9.x build
+  of the same source with different mutation/virtualization settings,
+  then ask how much of the pipeline survives unchanged (no new rules).
+  Then 3.10.x the same way. One different sample teaches more than
+  ten synthetic same-build binaries.
 - 3.8.1 research binary fetched (VEXA tests dir) to data/vmp381.
   `scan` detects vmp3-fdj; trace died at an RVA jump to `0xd536`.
   ALIAS_RVA lands (+2 uniq) but target is unbound import RVA:
