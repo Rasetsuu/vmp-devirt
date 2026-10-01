@@ -15,6 +15,14 @@ FLAG_WRITERS = {"add", "sub", "cmp", "and", "or", "xor", "test", "neg",
                 "dec", "inc", "adc", "sbb"}
 # NOTE: `not`, `mov`, `lea`, `push`, `pop` do NOT touch flags and must
 # never be picked as writers. `dec`/`inc` preserve CF.
+# Post-state rule (hit regs are POST-writer): writers with a register
+# destination leave their result in that register, so ZF comes straight
+# from the snapshot — re-applying the writer double-counts (off-by-one
+# at counter wrap; e.g. `dec r9` + `jne` missed 2/3996 before this).
+# `cmp`/`test` are pure (no reg write): evaluate from regs as before.
+# `rol`/`ror` preserve ZF: excluded.
+MODIFIES_REG = {"dec", "inc", "add", "sub", "and", "or", "xor", "neg",
+                "shl", "shr", "sal", "sar", "adc", "sbb"}
 
 REGFILE = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10",
            "r11", "r12", "r13", "r14", "r15", "rbp", "rsp"]
@@ -77,6 +85,30 @@ def op_val(ins, idx, regs):
     return None, 0
 
 
+def post_state_zf(writer, regs):
+    """ZF from hit-time (post-writer) regs, or None if inapplicable.
+
+    Pushan-style merge insight in miniature: at a join the flags are a
+    function of merged state, not of re-executing the writer on that
+    state. For reg-destination writers the result IS the snapshot
+    register, so ZF reads out directly. Pure writers (cmp/test) and
+    exotic shapes return None -> caller falls back to evaluation."""
+    if writer.mnemonic not in MODIFIES_REG:
+        return None
+    try:
+        op0 = writer.operands[0]
+    except Exception:
+        return None
+    if op0.type != X86_OP_REG:
+        return None
+    try:
+        dest = writer.reg_name(op0.value.reg)
+    except Exception:
+        return None
+    bits = max(op0.size * 8, 8)
+    return ((regs.get(dest, 0) or 0) & ((1 << bits) - 1)) == 0
+
+
 def main():
     h = json.load(open(D + "/open_hits.json"))
     trs = struct.unpack("<%dQ" % (os.path.getsize(D + "/open_trace.bin") // 8),
@@ -135,6 +167,15 @@ def main():
             if nx is None:
                 continue
             regs = {r: (x.get(r, 0) or 0) for r in REGFILE}
+            # je/jne fast path: ZF straight from post-writer snapshot
+            # (no double-apply of modifying writers).
+            if mn in ("je", "jne"):
+                zf = post_state_zf(writer, regs)
+                if zf is not None and tgt is not None:
+                    tot += 1
+                    if ((not zf if mn == "jne" else zf) == (nx == tgt)):
+                        ok += 1
+                    continue
             # evaluate writer on current regs
             try:
                 if writer.mnemonic in ("cmp", "sub"):
