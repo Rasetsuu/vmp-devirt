@@ -189,3 +189,17 @@ statically) + deep call-hidden shapes — live mining
 key=dil, Neg→Not→Neg→Ror1).
 Key-register sets differ per mode: per-mode mining is required, a
 single watchlist/cryptor does not transfer.
+
+## Saturn-subset brightening
+
+`devirt brighten` (`src/backend/brighten.rs`): constant-pool folding +
+RSP-concretized stack-slot recovery over Remill IR text (Saturn's two
+moves, per-BB form; full CFG-shell global→alloca loop queued).
+300-file sample: **0 folds** (post-opt reads are State-dynamic; VMP 3.9
+keeps constants in the VM stream, not PE .rdata — Saturn's pool
+assumption does not fire here, tool validated by unit test), **110
+slots in 55 files, all `rsp+0 w=4 rd+wr`** — uniform VM stack-top
+32-bit spill idiom. Pool restricted to loader-static sections
+(.rdata/.pdata/.reloc/.buildid; .text/.data/VMP sections excluded —
+SMC/IAT-stale, same caveat as Pushan S1). RSP-symbolic slots need no
+concrete RSP; RSP+huge offsets rejected as dynamic indices.
