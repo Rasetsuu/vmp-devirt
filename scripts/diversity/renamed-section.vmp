@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+	<Protection InputFileName="base.exe" Options="32768" CheckKernelDebugger="false" CompressionMode="0" VMCodeSectionName=".vmp2" VMExecutorCount="1" LicenseDataFileName="" OutputFileName="divB.exe" WaterMarkName="" RunParameters="">
+	</Protection>
+	<DLLBox/>
+	<Script IncludedInCompilation="true"></Script>
+</Document>
