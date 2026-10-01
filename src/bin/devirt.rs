@@ -154,6 +154,10 @@ fn main() -> Result<()> {
             };
             let uniq: BTreeSet<u64> = trace.iter().cloned().collect();
             let mut indirect: HashSet<u64> = HashSet::new();
+            // Branch dispatch (Tigress ifnest/switch nests, VMP jcc splits):
+            // conditional jumps with >1 observed successor ARE dispatchers.
+            // Collected here, filtered to multi-target after table build.
+            let mut branches: HashSet<u64> = HashSet::new();
             for va in uniq {
                 let bytes = match read_va(va, 6) {
                     Some(b) => b,
@@ -165,21 +169,37 @@ fn main() -> Result<()> {
                     && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
                 {
                     indirect.insert(va);
+                } else if ins.mnemonic() == iced_x86::Mnemonic::Call
+                    && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
+                {
+                    // Call threading (Tigress call dispatch): handler
+                    // invocation IS the dispatch edge; rets are not sites
+                    // so no return-edge noise enters the tables.
+                    indirect.insert(va);
+                } else if ins.is_jcc_short_or_near() {
+                    branches.insert(va);
                 }
             }
-            let tables = dispatch_tables(&trace, &|va| indirect.contains(&va));
+            let both = |va: u64| indirect.contains(&va) || branches.contains(&va);
+            let tables = dispatch_tables(&trace, &both);
             println!("indirect dispatch sites: {}", tables.len());
             let mut multi = 0;
+            let mut multi_br = 0;
             for (va, succ) in tables.iter().take(40) {
-                println!("  {:#x}: {} targets {}", va, succ.len(),
-                    succ.iter().take(6).map(|s| format!("{:#x}", s)).collect::<Vec<_>>().join(" | "));
+                let kind = if indirect.contains(va) { "ind" } else { "br" };
+                println!("  {:#x}: {} targets {} [{}]", va, succ.len(),
+                    succ.iter().take(6).map(|s| format!("{:#x}", s)).collect::<Vec<_>>().join(" | "), kind);
             }
-            for (_, succ) in tables.iter() {
+            for (va, succ) in tables.iter() {
                 if succ.len() > 1 {
                     multi += 1;
+                    if branches.contains(va) {
+                        multi_br += 1;
+                    }
                 }
             }
-            println!("multi-target dispatchers (total): {}", multi);
+            println!("multi-target dispatchers (total): {} (indirect {}, branch {})",
+                multi, multi - multi_br, multi_br);
         }
         other if other == "mine-live" => {
             if args.len() < 4 {
