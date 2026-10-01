@@ -65,6 +65,18 @@ Canonical recovered-machine IR (`VM_LOAD/STORE/PUSH/POP/ADD/...`)
 with per-protector frontends feeding one backend. Premature before
 two families exist; the IR vocabulary must emerge from evidence.
 
+## Showcase corpus (planned: after Tigress family lands, before push)
+
+Public end-to-end proof on targets we own outright: a benign demo
+(small game or DLL exercising arithmetic + branches + loops + calls
++ memory — the factory suite's five shapes) protected with every
+available VMP version × mode (Mutation/Ultra/Virtualization) ×
+options (packing, anti-debug) plus Tigress (≥2 dispatch modes),
+each fully devirtualized with this pipeline to replay equivalence.
+One matrix: rows = protections, columns = pipeline stages, cells =
+measured numbers. That table — not claims — is the release proof.
+`docs/coverage.md` pushes with it (held local until then).
+
 ## Non-goals (standing)
 
 Cheat creation/porting/operation, private servers, running bots,
