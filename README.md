@@ -31,7 +31,7 @@ push-button devirtualizer:
 src/
   lib.rs               crate root, data_dir()
   pe_loader.rs         PE parsing / VA reads
-  opcode_map.rs        canonical 3.5.1 opcode -> handler map
+  opcode_map.rs        legacy handler-type labels (oracle only, see module docs)
   frontend/
     mod.rs             VmFrontend trait (detect/fetch_stream/handler_addrs)
     fetch_finder.rs    movzx-byte FDJ scan + watchset/snapshot helpers
