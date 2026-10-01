@@ -180,6 +180,41 @@ with open(OUT + "/iat.h", "w") as f:
     f.write("};\n")
     print("iat slots:", n)
 # ELF GOT names for driver dlsym (kind 3). PE path: empty.
+# Native shims for lifted PLT calls (ELF): Remill lifts `call pltVA`
+# as a direct call to sub_<pltVA>, which must exist at link time. Each
+# shim reads args from Remill State offsets and calls the real libc
+# function (guest addresses are host addresses, 1:1 mapped).
+with open(OUT + "/plt_calls.cpp", "w") as f:
+    f.write('// generated: native shims for lifted PLT calls\n')
+    f.write('#include <cstdint>\n#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n')
+    f.write('#include <dlfcn.h>\n')
+    f.write('static uint64_t R(uint8_t *s, unsigned o) { return *(uint64_t *)(s + o); }\n')
+    f.write('static void W(uint8_t *s, unsigned o, uint64_t v) { *(uint64_t *)(s + o) = v; }\n')
+    f.write('enum : unsigned { RA=2216, RC=2248, RD=2264, RSI=2280, RDI=2296 };\n')
+    got = []
+    if pe is None:
+        import re as _re2
+        txt = open(OUT + "/iat.h").read()
+        # .plt base: first kind-3 slot minus 16 (resolver slot)
+        names = [m.group(1) for m in _re2.finditer(r"\{0x[0-9a-f]+, 3\},  //plt (\S+)", txt)]
+        plt_base = next((va for n, va, sp, of, ra in secs if n == ".plt"), 0)
+        # rela order == PLT index order; entry 0 is the resolver slot
+        for i, nm in enumerate(names):
+            if plt_base:
+                got.append((plt_base + 16 + i * 16, nm))
+    for va, nm in got:
+        f.write('extern "C" void *sub_%x(void *st, uint64_t pc, void *mem) {\n' % va)
+        f.write('  (void)pc; (void)mem; uint8_t *s = (uint8_t *)st;\n')
+        if nm in ("memcpy", "memmove"):
+            f.write('  void *r = %s((void*)R(s,RDI), (void*)R(s,RSI), (size_t)R(s,RD)); W(s,RA,(uint64_t)r); return mem;\n' % nm)
+        elif nm == "memset":
+            f.write('  void *r = memset((void*)R(s,RDI), (int)R(s,RSI), (size_t)R(s,RD)); W(s,RA,(uint64_t)r); return mem;\n')
+        else:
+            f.write('  void *h = dlsym(RTLD_DEFAULT, "%s");\n' % nm)
+            f.write('  if (!h) { fprintf(stderr, "PLT shim: no %s\\n"); exit(9); }\n' % nm)
+            f.write('  W(s,RA,0); return mem;\n')
+        f.write('}\n')
+    print("plt shims:", len(got))
 with open(OUT + "/iat.h", "a") as f:
     f.write("static const struct { uint64_t slot; const char *name; } kGOT[] = {\n")
     if pe is None:
