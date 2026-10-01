@@ -145,25 +145,12 @@ fn main() -> Result<()> {
             let trace: Vec<u64> = tb.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
             let bin = PEBinary::load(&args[3]).with_context(|| format!("load {}", args[3]))?;
             // Pre-decode unique VAs once (trace is millions of steps).
-            // Parse sections a single time; PEBinary::read_bytes re-parses
-            // the PE per call (too slow for 90k sites).
+            // section_map() is format-agnostic (PE RVAs / ELF sh_addrs);
+            // read bytes via bin.read_via (file-backed ranges only).
             use std::collections::{BTreeSet, HashSet};
-            let pe = bin.parse_pe()?;
-            let image_base = bin.image_base().unwrap_or(0x140000000);
-            let mut sects = Vec::new();
-            for s in &pe.sections {
-                let start = image_base + s.virtual_address as u64;
-                let end = start + s.virtual_size.max(s.size_of_raw_data) as u64;
-                sects.push((start, end, s.pointer_to_raw_data as usize, s.virtual_address as usize));
-            }
+            let sects = bin.section_map()?;
             let read_va = |va: u64, n: usize| -> Option<Vec<u8>> {
-                for (start, end, raw, _rva) in &sects {
-                    if va >= *start && va + n as u64 <= *end {
-                        let off = *raw + (va - *start) as usize;
-                        return bin.data.get(off..off + n).map(|b| b.to_vec());
-                    }
-                }
-                None
+                bin.read_via(&sects, va, n)
             };
             let uniq: BTreeSet<u64> = trace.iter().cloned().collect();
             let mut indirect: HashSet<u64> = HashSet::new();
