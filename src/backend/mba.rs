@@ -423,6 +423,26 @@ fn denormalize(nf: &BTreeMap<Vec<Atom>, u64>) -> Option<Expr> {
     }
 }
 
+/// Translate a byte-chain op list to an [`Expr`] (rotation-free subset).
+/// `ops`: (op-name, imm) with names Xor/Add/Sub/Neg/Not/Inc/Dec.
+/// Returns `None` for chains containing rotates, Bswap, or And
+/// (outside the linear basis). Variable is always `"x"`.
+pub fn from_chain(ops: &[(String, u64)]) -> Option<Expr> {
+    let mut e = Expr::Var("x".to_string());
+    for (op, imm) in ops {
+        e = match op.as_str() {
+            "Xor" => Expr::Xor(Box::new(e), Box::new(Expr::Const(*imm & 0xFF))),
+            "Add" => Expr::Add(Box::new(e), Box::new(Expr::Const(*imm & 0xFF))),
+            "Sub" => Expr::Sub(Box::new(e), Box::new(Expr::Const(*imm & 0xFF))),
+            "Inc" => Expr::Add(Box::new(e), Box::new(Expr::Const(1))),
+            "Dec" => Expr::Sub(Box::new(e), Box::new(Expr::Const(1))),
+            "Neg" => Expr::Sub(Box::new(Expr::Const(0)), Box::new(e)),
+            "Not" => Expr::Not(Box::new(e)),
+            _ => return None,
+        };
+    }
+    Some(e)
+}
 /// Bottom-up Table-2 replacement (paper's ReplaceBoolWithMBA).
 /// Order matters: strip double negation, try the row on the CURRENT
 /// shape first (parents before children — recursing first would
@@ -519,11 +539,22 @@ fn from_normal(nf: &BTreeMap<Vec<Atom>, u64>) -> Expr {
     acc.unwrap_or(Expr::Const(0))
 }
 
+/// Exact-only equivalence: `Some(true/false)` when the difference
+/// normalizes after Table-2 replacement, `None` when it does not
+/// (residual bitwise — caller must fall back to testing, never claim).
+pub fn equiv_exact(a: &Expr, b: &Expr) -> Option<bool> {
+    let diff = Expr::Sub(Box::new(a.clone()), Box::new(b.clone()));
+    let lin = replace_bool(&diff);
+    if lin.is_mba() {
+        return None;
+    }
+    normalize(&lin).map(|nf| nf.is_empty())
+}
+
 /// Equivalence: exact when the difference normalizes to zero after
 /// Table-2 replacement, otherwise deterministic random testing.
 /// Returns `Some(true/false)`; `None` only on internal blowup guard.
-pub fn equiv(a: &Expr, b: &Expr) -> Option<bool> {
-    let mut varset = std::collections::BTreeSet::new();
+pub fn equiv(a: &Expr, b: &Expr) -> Option<bool> {    let mut varset = std::collections::BTreeSet::new();
     fn walk(e: &Expr, v: &mut std::collections::BTreeSet<String>) {
         match e {
             Expr::Var(x) => {
@@ -689,5 +720,24 @@ mod tests {
         let or = Expr::Or(Box::new(x.clone()), Box::new(y.clone()));
         let xor = Expr::Xor(Box::new(x.clone()), Box::new(y.clone()));
         assert_eq!(equiv(&or, &xor), Some(false));
+    }
+
+    #[test]
+    fn chain_neg_not_is_dec() {
+        // Miner discovery (gate-zero: Neg->Not == Dec), now PROVED
+        // instead of pair-tested.
+        let e = from_chain(&[("Neg".to_string(), 0), ("Not".to_string(), 0)]).unwrap();
+        let d = from_chain(&[("Dec".to_string(), 0)]).unwrap();
+        assert_eq!(equiv(&e, &d), Some(true));
+        let s = simplify(&e);
+        assert!(s.nodes() <= 4, "nodes={} expr={:?}", s.nodes(), s);
+        assert_eq!(equiv(&s, &d), Some(true));
+    }
+
+    #[test]
+    fn chain_with_rotate_declines() {
+        // Rotates are outside the linear basis: honest None, not garbage.
+        assert!(from_chain(&[("Ror".to_string(), 1)]).is_none());
+        assert!(from_chain(&[("And".to_string(), 0xFF)]).is_none());
     }
 }

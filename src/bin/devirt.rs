@@ -509,6 +509,34 @@ fn main() -> Result<()> {
                 } else if best < n {
                     println!("  {} compressible {} -> {}", site, n, best);
                 }
+                // MBA-Blast proof (rotation-free subset): translate both
+                // the mined chain and its rule-canonical form to Exprs;
+                // equiv() PROVES (exact path) rather than pair-tests.
+                {
+                    use vmp_devirt::backend::mba::{equiv_exact, from_chain, simplify as mba_simplify};
+                    let opname = |o: CryptOp| match o {
+                        CryptOp::Xor => "Xor", CryptOp::Add => "Add", CryptOp::Sub => "Sub",
+                        CryptOp::Rol => "Rol", CryptOp::Ror => "Ror", CryptOp::Inc => "Inc",
+                        CryptOp::Dec => "Dec", CryptOp::Neg => "Neg", CryptOp::Not => "Not",
+                        _ => "?",
+                    };
+                    let to_pairs = |v: &[(CryptOp, u64)]| -> Vec<(String, u64)> {
+                        v.iter().map(|(o, x)| (opname(*o).to_string(), *x)).collect()
+                    };
+                    if let (Some(orig), Some(cano)) = (
+                        from_chain(&to_pairs(&base)),
+                        from_chain(&to_pairs(&cvec)),
+                    ) {
+                        match equiv_exact(&orig, &cano) {
+                            Some(true) => {
+                                let s = mba_simplify(&orig);
+                                eprintln!("  {} mba-proved (nodes {} -> {})", site, orig.nodes(), s.nodes());
+                            }
+                            Some(false) => disagree.push(site.clone() + " (mba-inequivalent)"),
+                            None => {}
+                        }
+                    }
+                }
                 agree += 1;
             }
             println!("synth cross-check: agree={} disagree={} skipped={} total={}",
