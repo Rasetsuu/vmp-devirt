@@ -261,6 +261,40 @@ impl PEBinary {
         }
         None
     }
+
+    /// Emulator-facing section list: (name, va, file_off, raw_len, virt_len).
+    /// PE: base + RVA, raw = size_of_raw_data, virt = max(virt, raw).
+    /// ELF: absolute sh_addr; NOBITS reported with raw_len 0 (zero-fill).
+    pub fn map_sections(&self) -> Result<Vec<(String, u64, usize, usize, usize)>> {
+        if self.fmt == BinFmt::Pe {
+            let pe = self.parse_pe()?;
+            let base = self.image_base()?;
+            let mut out = Vec::new();
+            for s in &pe.sections {
+                let name = std::str::from_utf8(&s.name).unwrap_or("").trim_end_matches('\0').to_string();
+                let raw = s.size_of_raw_data as usize;
+                let virt = (s.virtual_size.max(s.size_of_raw_data)) as usize;
+                if virt == 0 {
+                    continue;
+                }
+                out.push((name, base + s.virtual_address as u64, s.pointer_to_raw_data as usize, raw, virt));
+            }
+            Ok(out)
+        } else {
+            let elf = self.parse_elf()?;
+            let mut out = Vec::new();
+            for sh in &elf.section_headers {
+                if sh.sh_addr == 0 || sh.sh_size == 0 {
+                    continue;
+                }
+                let name = elf.shdr_strtab[sh.sh_name].to_string();
+                let nobits = sh.sh_type == goblin::elf::section_header::SHT_NOBITS;
+                out.push((name, sh.sh_addr, sh.sh_offset as usize,
+                    if nobits { 0 } else { sh.sh_size as usize }, sh.sh_size as usize));
+            }
+            Ok(out)
+        }
+    }
 }
 
 #[cfg(test)]
