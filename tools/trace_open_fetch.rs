@@ -142,6 +142,23 @@ fn main() -> anyhow::Result<()> {
             // Zero page with `ret`: unbound IAT calls (target 0) return cleanly.
             let _ = emu.mem_map(0, 0x1000, Prot::ALL);
             let _ = emu.mem_write(0, &[0xC3u8]);
+            // Minimal TEB/PEB (TEB_INIT=1): some protectors (3.8.1) read
+            // the image base from PEB (fs:[0x60] -> PEB+0x10) for RVA
+            // dispatch; under emulation fs reads 0 without this.
+            // Layout: TEB at 0x7FFF0000, PEB at 0x7FFF1000 (both inside
+            // the sparse range); FS_BASE set, GS_BASE zeroed.
+            if std::env::var("TEB_INIT").is_ok() {
+                let teb = 0x7FFF0000u64;
+                let peb = 0x7FFF1000u64;
+                let _ = emu.mem_write(teb + 0x08, &0x7ffe0000u64.to_le_bytes()); // StackBase
+                let _ = emu.mem_write(teb + 0x10, &0x7ff00000u64.to_le_bytes()); // StackLimit
+                let _ = emu.mem_write(teb + 0x60, &peb.to_le_bytes()); // ProcessEnvironmentBlock
+                let _ = emu.mem_write(peb + 0x02, &[0u8]); // BeingDebugged = 0
+                let _ = emu.mem_write(peb + 0x10, &base.to_le_bytes()); // ImageBaseAddress
+                let _ = emu.reg_write(RegisterX86::FS_BASE, teb);
+                let _ = emu.reg_write(RegisterX86::GS_BASE, 0);
+                eprintln!("  TEB/PEB stubbed: teb={:#x} peb={:#x} base={:#x}", teb, peb, base);
+            }
             if entry_mode {
                 // Determinize: nop the single rdtsc (anti-debug timing gate post-fetch).
                 if let Ok(b) = bin.read_bytes(0x14084952bu64, 2) {
