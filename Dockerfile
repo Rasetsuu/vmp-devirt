@@ -1,7 +1,11 @@
 # vmp-devirt build env: LLVM 22 + Rust + Python lifting deps.
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \
+# LLVM 22 is NOT on stock noble: pull from apt.llvm.org (same as CI llvm-link job).
+RUN apt-get update && apt-get install -y wget gnupg \
+    && wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc \
+    && echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | tee /etc/apt/sources.list.d/llvm.list \
+    && apt-get update && apt-get install -y \
     cmake ninja-build git curl python3 python3-pip pkg-config \
     llvm-22-dev libclang-22-dev clang-22 \
     && rm -rf /var/lib/apt/lists/*
