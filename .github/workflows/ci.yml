@@ -6,11 +6,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: system deps
-        run: sudo apt-get update && sudo apt-get install -y llvm-22-dev libclang-22-dev clang-22 python3-pip
-      - name: python deps
-        run: pip3 install triton-library capstone pefile
       - name: build
         run: cargo build --release
       - name: test (no commercial fixtures; fixture-only tests run, sample tests skip)
         run: cargo test --release
+  # Optional LLVM link check (llvm-sys): needs LLVM 22 from apt.llvm.org.
+  # Allowed to fail until pinned; default build/test never needs LLVM.
+  llvm-link:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: llvm apt repo
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update && sudo apt-get install -y llvm-22-dev libclang-22-dev clang-22
+      - name: link check
+        run: cargo build --release --features llvm

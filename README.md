@@ -69,8 +69,10 @@ pip install triton-library capstone pefile   # python helpers
 #   to scripts/triton_handlers.py output if desired; not vendored.
 ```
 
-Dockerfile reproduces the full env. CI runs `cargo test` with no
-commercial fixtures (sample-gated tests skip; `tests/smoke.rs` always runs).
+Dockerfile reproduces the full env. CI runs `cargo build/test --release`
+(default features, no LLVM link, no commercial fixtures; sample-gated
+tests skip, `tests/smoke.rs` always runs). The optional `--features llvm`
+link check runs as a non-blocking CI job (needs LLVM 22).
 
 ## Environment
 
