@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y wget gnupg \
     && echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | tee /etc/apt/sources.list.d/llvm.list \
     && apt-get update && apt-get install -y \
     cmake ninja-build git curl python3 python3-pip pkg-config \
-    llvm-22-dev libclang-22-dev clang-22 \
+    llvm-22-dev libclang-22-dev clang-22 libpolly-22-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
