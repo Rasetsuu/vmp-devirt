@@ -33,7 +33,11 @@ foreign watchlist barely fires. Per-mode mining is the follow-up.
 ## Branch conditions
 
 `scripts/branch_solve.py` on add2 branch-watch run: 5 divergent sites,
-4 perfect (2202/2202, 88/88, 3994/3996, 779/779, 100/100).
+**5 perfect** (2202/2202, 88/88, 3996/3996, 779/779, 100/100).
+Pushan-inspired post-state rule: hit regs are post-writer, so ZF for
+reg-destination writers (`dec r9` + `jne`) reads straight from the
+snapshot instead of re-applying the writer (old code double-counted,
+2 misses at counter wrap). Pure writers (`cmp`/`test`) unchanged.
 
 ## Chain verification (mined => verified)
 
