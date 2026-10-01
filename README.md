@@ -93,8 +93,15 @@ link check runs as a non-blocking CI job (needs LLVM 22).
 
 1. Snapshot the binary from its entry in Unicorn (sections + scratch,
    zero-page `ret`, import stubs, IN hook).
-2. Detect fetch sites (executed `movzx byte [reg]` beats static patterns —
-   static-only hits measured 0% execution on hardened targets).
+2. Detect fetch sites by *execution*, not by opcode spelling:
+   watch which `reg` feeds an executed byte-load, whatever its
+   mnemonic. Static `movzx` patterns are the fallback seed only —
+   static-only hits measured 0% execution on hardened targets.
+   Fetch-shape coverage: `movzx` ✓, `movsx` ✓ (SMC flips between
+   them mid-run; miner accepts both), and-gated/co-byte fetches ✓
+   via live capture. Other shapes (e.g. string ops): bring bytes,
+   get a miner case — file an issue with opcode bytes around the
+   fetch. Pattern-locked fetch is a documented non-method here.
 3. Mine per-site cryptors from code (branch-following worklist).
 4. Decode raw^key with the architectural key register (free sweeps
    overfit — constrain to the mined key).

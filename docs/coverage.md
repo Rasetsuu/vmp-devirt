@@ -4,6 +4,18 @@ All numbers from instrumented Unicorn snapshots (`trace_open_fetch`)
 on self-built VMP 3.9.4 factory binaries. No target binaries here;
 reproduce with your own licensed samples.
 
+## Fetch discovery (execution-first, not spelling-first)
+
+Primary sensor: executed byte-loads under Unicorn (which register feeds
+a load that actually fires). Static pattern scans seed the watchlist
+only. Measured: static-only pattern hits execute at 0% on hardened
+targets; the executed watch is what mines.
+Shape coverage: `movzx` ✓ / `movsx` ✓ (SMC flips `B6↔BE` mid-run, miner
+accepts both) / and-gated + co-byte fetches ✓ (live capture,
+`mine-live`/`mine-hits`). Uncovered shapes (e.g. string-op fetches):
+open an issue with opcode bytes around the fetch — each becomes a
+miner case. No chain in this repo assumes fetch == one mnemonic.
+
 ## Function coverage (VMP 3.9.4 Virtualization, default)
 
 | Binary | Entry | Hits | End RIP | Note |
