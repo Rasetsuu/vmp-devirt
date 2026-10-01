@@ -99,9 +99,16 @@ link check runs as a non-blocking CI job (needs LLVM 22).
    static-only hits measured 0% execution on hardened targets.
    Fetch-shape coverage: `movzx` ✓, `movsx` ✓ (SMC flips between
    them mid-run; miner accepts both), and-gated/co-byte fetches ✓
-   via live capture. Other shapes (e.g. string ops): bring bytes,
-   get a miner case — file an issue with opcode bytes around the
-   fetch. Pattern-locked fetch is a documented non-method here.
+   via live capture. Measured bias (3.9.4, `devirt fetch`
+   dispatch-anchored back-slices vs static strict scan): disjoint
+   populations — sensor found 8 fetch-shaped byte sites the
+   pattern+`mov-imm32` gate never proposed (indexed/scaled forms
+   like `movzx edx,[r9+riz-1]`), 1 mined a verified chain
+   (`Rol→Inc→Xor52→Ror`, key `r10l`); the rest are VM-context
+   loads the miner correctly rejects. Other shapes (e.g. string
+   ops): bring bytes, get a miner case — file an issue with opcode
+   bytes around the fetch. Pattern-locked fetch is a documented
+   non-method here.
 3. Mine per-site cryptors from code (branch-following worklist).
 4. Decode raw^key with the architectural key register (free sweeps
    overfit — constrain to the mined key).

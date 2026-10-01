@@ -23,10 +23,11 @@ fn main() -> Result<()> {
         eprintln!("  devirt mine-hits <open_hits.json>     # mine all hit sites from hit-time code");
         eprintln!("  devirt synth <chains.json>           # cross-check mined chains by re-synthesis");        eprintln!("  devirt handlers <trace> <memlog> <bin>  # handler blocks via vctx-stores + back-slice");
         eprintln!("  devirt brighten <ll> [--regs <json> --pool <json> --image <bin> --base <hex> --out <ll>]");
+        eprintln!("  devirt fetch <trace> <bin> [--memlog <ml>]  # dispatch-anchored fetch discovery");
         eprintln!("                                           # Saturn-subset: const-pool fold + stack slots");
         std::process::exit(2);
     }
-    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers", "synth", "brighten"].contains(&args[1].as_str()) {
+    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers", "synth", "brighten", "fetch"].contains(&args[1].as_str()) {
         // Merge/sense/dispatch/mine-live/mine-hits/handlers work on raw
         // files, not PEs (handlers takes its binary as args[4]).
         None
@@ -40,7 +41,7 @@ fn main() -> Result<()> {
                 let applies = f.detect(&bin).unwrap_or(false);
                 println!("frontend {:<10} applies={}", f.name(), applies);
                 if applies {
-                    for h in f.handler_addrs(&bin, &[]).unwrap_or_default().iter().take(500) {
+                    for h in f.handler_addrs(&bin, &[]).unwrap_or_default().iter() {
                         println!("  handler candidate {:#x}", h);
                     }
                 }
@@ -551,6 +552,132 @@ fn main() -> Result<()> {
             eprintln!("brighten: folds={} slots={}", o.folds, o.slots.len());
             for s in o.slots.iter().take(20) {
                 eprintln!("  slot rsp{:+} w={} {}", s.offset, s.width, if s.is_write { "wr" } else { "rd" });
+            }
+        }
+        other if other == "fetch" => {
+            if args.len() < 4 {
+                eprintln!("fetch needs <trace.bin> <binary> [--memlog <memlog.bin> --depth N --sample N]");
+                std::process::exit(2);
+            }
+            use vmp_devirt::backend::fetch::{decode_va, discover, stride_check};
+            use std::collections::{BTreeMap, BTreeSet};
+            let mut memlog_p = None::<String>;
+            let mut depth = 40usize;
+            let mut sample = 200usize;
+            let mut i = 4;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--memlog" => { memlog_p = Some(args[i + 1].clone()); i += 2; }
+                    "--depth" => { depth = args[i + 1].parse().unwrap_or(40); i += 2; }
+                    "--sample" => { sample = args[i + 1].parse().unwrap_or(200); i += 2; }
+                    f => {
+                        eprintln!("fetch: unknown flag {}", f);
+                        std::process::exit(2);
+                    }
+                }
+            }
+            let tb = std::fs::read(&args[2]).with_context(|| format!("read {}", args[2]))?;
+            let trace: Vec<u64> = tb.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+            let bin = PEBinary::load(&args[3]).with_context(|| format!("load {}", args[3]))?;
+            let map = bin.section_map()?;
+            let read_va = |va: u64, n: usize| -> Option<Vec<u8>> { bin.read_via(&map, va, n) };
+            // Dispatch sites + target regs (same finder as dispatch CLI).
+            let uniq: BTreeSet<u64> = trace.iter().cloned().collect();
+            let mut sites = BTreeSet::new();
+            let mut tregs = BTreeMap::new();
+            for va in uniq {
+                let bytes = match read_va(va, 15) {
+                    Some(b) => b,
+                    None => continue,
+                };
+                let mut d = iced_x86::Decoder::with_ip(64, &bytes, va, iced_x86::DecoderOptions::NONE);
+                if !d.can_decode() {
+                    continue;
+                }
+                let ins = d.decode();
+                if (ins.mnemonic() == iced_x86::Mnemonic::Jmp
+                    || ins.mnemonic() == iced_x86::Mnemonic::Call)
+                    && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
+                {
+                    sites.insert(va);
+                    tregs.insert(va, format!("{:?}", ins.op_register(0)).to_lowercase());
+                }
+            }
+            eprintln!("fetch: {} dispatch sites, trace steps {}", sites.len(), trace.len());
+            // Branch anchors: multi-successor jcc (ifnest/switch dispatch).
+            // Successor sets over the full trace, then jcc decode check.
+            let mut succ: BTreeMap<u64, std::collections::BTreeSet<u64>> = BTreeMap::new();
+            for w in trace.windows(2) {
+                succ.entry(w[0]).or_default().insert(w[1]);
+            }
+            let mut branches = BTreeSet::new();
+            for (va, ss) in &succ {
+                if ss.len() < 2 {
+                    continue;
+                }
+                if let Some(b) = read_va(*va, 6) {
+                    let mut d = iced_x86::Decoder::with_ip(64, &b, *va, iced_x86::DecoderOptions::NONE);
+                    if d.can_decode() && d.decode().is_jcc_short_or_near() {
+                        branches.insert(*va);
+                    }
+                }
+            }
+            eprintln!("fetch: {} branch anchors", branches.len());
+            let mut counts: BTreeMap<u64, usize> = BTreeMap::new();
+            let mut sub: Vec<u64> = Vec::new();
+            for va in &trace {
+                if sites.contains(va) {
+                    let c = counts.entry(*va).or_insert(0);
+                    if *c < sample {
+                        *c += 1;
+                        sub.push(*va);
+                    }
+                } else {
+                    // keep full context for back-slices: retain everything
+                    // (memory cost ~8B/step; sampled dispatch only bounds work).
+                    sub.push(*va);
+                }
+            }
+            let decode = |va: u64| -> Option<vmp_devirt::backend::fetch::FetchDecoded> {
+                read_va(va, 15).and_then(|b| decode_va(&b, va))
+            };
+            use vmp_devirt::backend::fetch::{discover_branch_stats, discover_stats, SliceStats};
+            let mut stats = SliceStats::default();
+            let cands = discover_stats(&sub, &sites, &tregs, &decode, depth, Some(&mut stats));
+            let mut cands = cands;
+            let mut bcands = discover_branch_stats(&trace, &branches, &decode, depth, sample, Some(&mut stats));
+            eprintln!("fetch slice stats: found={} call_stop={} depth_out={} decode_fail={} empty_seeds={}",
+                stats.found, stats.call_stop, stats.depth_out, stats.decode_fail, stats.empty_seeds);
+            cands.append(&mut bcands);
+            cands.sort_by_key(|c| (u64::MAX - c.votes as u64, c.va));
+            // Optional stride validation from memlog reads at candidate VAs.
+            let reads: BTreeMap<u64, Vec<u64>> = match memlog_p {
+                Some(p) => {
+                    let mb = std::fs::read(&p)?;
+                    let mut m: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+                    for c in mb.chunks_exact(33) {
+                        let rip = u64::from_le_bytes(c[0..8].try_into().unwrap());
+                        let w = c[8] == 1;
+                        if w {
+                            continue; // reads only
+                        }
+                        let addr = u64::from_le_bytes(c[9..17].try_into().unwrap());
+                        m.entry(rip).or_default().push(addr);
+                    }
+                    m
+                }
+                None => BTreeMap::new(),
+            };
+            println!("fetch candidates: {}", cands.len());
+            for c in cands.iter().take(10000) {
+                let extra = match reads.get(&c.va) {
+                    Some(addrs) => {
+                        let (ok, med) = stride_check(addrs);
+                        format!(" stride={} med={}", if ok { "BYTECODE" } else { "other" }, med)
+                    }
+                    None => String::new(),
+                };
+                println!("  {:#x} via {:#x} base={} votes={}{}", c.va, c.via_dispatch, c.base, c.votes, extra);
             }
         }
         other => {

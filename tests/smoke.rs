@@ -35,7 +35,7 @@ fn fixture_pe(blob: &[u8]) -> PEBinary {
     img[sh + 20..sh + 24].copy_from_slice(&0x200u32.to_le_bytes()); // RawPtr
     img[sh + 36..sh + 40].copy_from_slice(&0x60000020u32.to_le_bytes()); // exec+read+code
     img[0x200..0x200 + blob.len()].copy_from_slice(blob);
-    PEBinary { path: "<fixture>".into(), data: img }
+    PEBinary { path: "<fixture>".into(), data: img, fmt: vmp_devirt::pe_loader::BinFmt::Pe }
 }
 
 #[test]
