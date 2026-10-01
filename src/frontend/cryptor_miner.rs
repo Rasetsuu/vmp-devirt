@@ -77,7 +77,32 @@ pub fn mine_cryptor_with(
     // loads: last mem-load source per destination reg name (co-bytes).
     let mut loads: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut aux_src: Option<String> = None;
-    let mut worklist = vec![(site.va, 0u8)];
+    // Entry tolerance (v6): watch VAs sometimes point at a prologue
+    // (e.g. pushfq) with the fetch 1-3 insns later. Scan forward for
+    // the first movzx/movsx and start the chain there; the site VA is
+    // kept for hit-joining. Bounded (4 insns) to avoid misattribution;
+    // chain_verify judges consistency downstream.
+    let mut start_va = site.va;
+    if let Some(code) = read(site.va, 32) {
+        let mut d = Decoder::with_ip(64, &code, site.va, DecoderOptions::NONE);
+        for _ in 0..4 {
+            if !d.can_decode() {
+                break;
+            }
+            let ins = d.decode();
+            if (ins.mnemonic() == Mnemonic::Movzx || ins.mnemonic() == Mnemonic::Movsx)
+                && ins.memory_base() != iced_x86::Register::None
+            {
+                start_va = ins.ip();
+                break;
+            }
+            // Stop at flow changes: the fetch belongs to straight-line prologue.
+            if matches!(ins.mnemonic(), Mnemonic::Jmp | Mnemonic::Call | Mnemonic::Ret) {
+                break;
+            }
+        }
+    }
+    let mut worklist = vec![(start_va, 0u8)];
     let mut total = 0usize;
     while let Some((mut ip, depth)) = worklist.pop() {
         if !visited.insert(ip) { continue; }

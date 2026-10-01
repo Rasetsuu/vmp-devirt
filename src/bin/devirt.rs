@@ -61,15 +61,27 @@ fn main() -> Result<()> {
                 va,
                 iced_x86::DecoderOptions::NONE,
             );
-            let movzx = d.decode();
-            // movsx accepted too: SMC flips B6<->BE (cf. fetch_finder).
-            if movzx.mnemonic() != iced_x86::Mnemonic::Movzx
-                && movzx.mnemonic() != iced_x86::Mnemonic::Movsx
-            {
-                anyhow::bail!("{:#x} is not a movzx/movsx fetch site", va);
+            // Entry tolerance: prologue first, fetch within 4 insns.
+            let mut movzx = None;
+            for _ in 0..4 {
+                if !d.can_decode() {
+                    break;
+                }
+                let ins = d.decode();
+                if (ins.mnemonic() == iced_x86::Mnemonic::Movzx
+                    || ins.mnemonic() == iced_x86::Mnemonic::Movsx)
+                    && ins.memory_base() != iced_x86::Register::None
+                {
+                    movzx = Some(ins);
+                    break;
+                }
+                if matches!(ins.mnemonic(), iced_x86::Mnemonic::Jmp | iced_x86::Mnemonic::Call | iced_x86::Mnemonic::Ret) {
+                    break;
+                }
             }
+            let movzx = movzx.with_context(|| format!("{:#x} is not a movzx/movsx fetch site", va))?;
             let site = FetchSite {
-                va,
+                va: movzx.ip(),
                 base: movzx.memory_base(),
                 dst: movzx.op0_register(),
                 len: movzx.len(),
@@ -241,14 +253,26 @@ fn main() -> Result<()> {
             };
             let bytes = read(va, 16).with_context(|| format!("no snapshot bytes at {:#x}", va))?;
             let mut d = iced_x86::Decoder::with_ip(64, &bytes, va, iced_x86::DecoderOptions::NONE);
-            let fetch = d.decode();
-            if fetch.mnemonic() != iced_x86::Mnemonic::Movzx
-                && fetch.mnemonic() != iced_x86::Mnemonic::Movsx
-            {
-                anyhow::bail!("{:#x} is not a movzx/movsx fetch site in overlay", va);
+            let mut fetch = None;
+            for _ in 0..4 {
+                if !d.can_decode() {
+                    break;
+                }
+                let ins = d.decode();
+                if (ins.mnemonic() == iced_x86::Mnemonic::Movzx
+                    || ins.mnemonic() == iced_x86::Mnemonic::Movsx)
+                    && ins.memory_base() != iced_x86::Register::None
+                {
+                    fetch = Some(ins);
+                    break;
+                }
+                if matches!(ins.mnemonic(), iced_x86::Mnemonic::Jmp | iced_x86::Mnemonic::Call | iced_x86::Mnemonic::Ret) {
+                    break;
+                }
             }
+            let fetch = fetch.with_context(|| format!("{:#x} is not a movzx/movsx fetch site in overlay", va))?;
             let site = FetchSite {
-                va,
+                va: fetch.ip(),
                 base: fetch.memory_base(),
                 dst: fetch.op0_register(),
                 len: fetch.len(),
@@ -291,15 +315,31 @@ fn main() -> Result<()> {
             }
             let mut ok = 0usize;
             for (va, code) in &sites {
+                // Entry tolerance: prologue first, fetch within 4 insns.
                 let mut d = iced_x86::Decoder::with_ip(64, code, *va, iced_x86::DecoderOptions::NONE);
-                let fetch = d.decode();
-                if fetch.mnemonic() != iced_x86::Mnemonic::Movzx
-                    && fetch.mnemonic() != iced_x86::Mnemonic::Movsx
-                {
-                    continue;
+                let mut fetch = None;
+                for _ in 0..4 {
+                    if !d.can_decode() {
+                        break;
+                    }
+                    let ins = d.decode();
+                    if (ins.mnemonic() == iced_x86::Mnemonic::Movzx
+                        || ins.mnemonic() == iced_x86::Mnemonic::Movsx)
+                        && ins.memory_base() != iced_x86::Register::None
+                    {
+                        fetch = Some(ins);
+                        break;
+                    }
+                    if matches!(ins.mnemonic(), iced_x86::Mnemonic::Jmp | iced_x86::Mnemonic::Call | iced_x86::Mnemonic::Ret) {
+                        break;
+                    }
                 }
+                let fetch = match fetch {
+                    Some(f) => f,
+                    None => continue,
+                };
                 let site = FetchSite {
-                    va: *va,
+                    va: fetch.ip(),
                     base: fetch.memory_base(),
                     dst: fetch.op0_register(),
                     len: fetch.len(),
