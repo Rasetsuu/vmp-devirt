@@ -71,7 +71,7 @@ proof first, automation second, research arcs last.
 - Thin scanners exist; needs the trace treatment 3.x got.
 - Blocked on samples (no protectors for 1.x/2.x automation).
 
-### 3.3 Second target family [STARTED, blocked]
+### 3.3 Second target family [STARTED, blocked; DIVERSITY PLAN ADDED]
 - 3.8.1 research binary fetched (VEXA tests dir) to data/vmp381.
   `scan` detects vmp3-fdj; trace died at an RVA jump to `0xd536`.
   ALIAS_RVA lands (+2 uniq) but target is unbound import RVA:
@@ -80,6 +80,12 @@ proof first, automation second, research arcs last.
   IAT fallback + SPARSE_HI all in place and change nothing. Needs
   loader emulation (import binding/decryption flow), a per-target
   RE project. Parked. Themida: zero work.
+
+## Phase 4 — Vision (not scheduled)
+
+Canonical recovered-machine IR (`VM_LOAD/STORE/PUSH/POP/ADD/...`) with
+per-protector frontends (VMP, Themida, Tigress) feeding one backend.
+Recorded from external review; premature before Phase 1-2 solidify.
 
 ## Non-goals (standing)
 Cheat creation/porting/operation, private servers, running bots,

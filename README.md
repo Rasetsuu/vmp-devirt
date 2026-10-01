@@ -4,6 +4,10 @@ Trace-assisted VMProtect devirtualization research: version front-ends
 (1.x gate / 2.x table / 3.x FDJ) feeding one shared backend
 (Remill lift → LLVM opt → semantic cards → dataflow → native objects).
 
+Validated against self-built VMP 3.9.4 binaries across multiple
+protection modes. VMP 3.8.x/3.10.x compatibility is experimental and
+sample-dependent.
+
 ## Scope and limitations (read first)
 
 This is a **research platform for analyzing VMProtect-protected binaries
