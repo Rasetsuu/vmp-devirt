@@ -74,12 +74,12 @@ proof first, automation second, research arcs last.
 ### 3.3 Second target family [STARTED, blocked]
 - 3.8.1 research binary fetched (VEXA tests dir) to data/vmp381.
   `scan` detects vmp3-fdj; trace died at an RVA jump to `0xd536`.
-  ALIAS_RVA mapping added (lands + executes, +2 uniq) but the target
-  is `.idata` garbage — the RVA itself is state-dependent (likely
-  import-return-dependent dispatch: our stubs return 0/heap-const
-  where Windows returns live pointers). Next: import-fidelity stubs
-  (bump allocator, real-ish TEB/PEB) or FS-base control. Parked.
-  Themida: zero work.
+  ALIAS_RVA lands (+2 uniq) but target is unbound import RVA:
+  entry thunk `jmp [rip+0x57e2]` reads slot value `0xd536` (never
+  relocated — VMP's loader didn't run under emulation). TEB/PEB +
+  IAT fallback + SPARSE_HI all in place and change nothing. Needs
+  loader emulation (import binding/decryption flow), a per-target
+  RE project. Parked. Themida: zero work.
 
 ## Non-goals (standing)
 Cheat creation/porting/operation, private servers, running bots,
