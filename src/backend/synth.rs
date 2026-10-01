@@ -31,44 +31,44 @@ const SKEL_OPS: &[CryptOp] = &[
     CryptOp::Not,
 ];
 
-fn needs_imm(op: CryptOp) -> bool {
-    matches!(op, CryptOp::Xor | CryptOp::Add | CryptOp::Sub | CryptOp::Rol | CryptOp::Ror)
-}
-
 /// Solve immediates for a fixed skeleton against pairs.
-/// v1 cap: at most ONE imm position searched exhaustively (256 tries).
-/// Skeletons needing more are skipped (documented limit — mined 3.9
-/// chains carry 0-1 immediates plus fixed ops; keys come from registers,
-/// and k>=2 needs pair-guided solving, queued).
+/// Domains are tight: rotate amounts only 0..=7 are distinct on bytes;
+/// wide immediates (Xor/Add/Sub) search 0..=255, capped at 2 positions
+/// (mined 3.9 chains carry <=2; keys come from registers, and more
+/// needs pair-guided solving, queued).
 fn solve_skeleton(skel: &[CryptOp], pairs: &[IoPair]) -> Option<ValueCryptor> {
     let mut chain = ValueCryptor::new(CryptSize::Byte);
     for op in skel {
         chain.add(*op, 0);
     }
-    let poss: Vec<usize> = skel
+    // (position, domain-max): amounts 0..=7, wide imms 0..=255
+    let doms: Vec<(usize, u64)> = skel
         .iter()
         .enumerate()
-        .filter(|(_, op)| needs_imm(**op))
-        .map(|(i, _)| i)
+        .filter_map(|(i, op)| match op {
+            CryptOp::Rol | CryptOp::Ror => Some((i, 7)),
+            CryptOp::Xor | CryptOp::Add | CryptOp::Sub => Some((i, 255)),
+            _ => None,
+        })
         .collect();
-    if poss.len() > 1 {
+    if doms.iter().filter(|(_, m)| *m == 255).count() > 2 {
         return None;
     }
     // recursive brute force with fail-fast pair checking
-    fn rec(chain: &mut ValueCryptor, poss: &[usize], pairs: &[IoPair]) -> bool {
-        if poss.is_empty() {
+    fn rec(chain: &mut ValueCryptor, doms: &[(usize, u64)], pairs: &[IoPair]) -> bool {
+        if doms.is_empty() {
             return pairs.iter().all(|p| chain.encrypt(p.input as u64) as u8 == p.output);
         }
-        let idx = poss[0];
-        for v in 0..=255u64 {
+        let (idx, maxv) = doms[0];
+        for v in 0..=maxv {
             chain.cmds[idx].value = v;
-            if rec(chain, &poss[1..], pairs) {
+            if rec(chain, &doms[1..], pairs) {
                 return true;
             }
         }
         false
     }
-    if rec(&mut chain, &poss, pairs) {
+    if rec(&mut chain, &doms, pairs) {
         Some(chain)
     } else {
         None
@@ -76,13 +76,15 @@ fn solve_skeleton(skel: &[CryptOp], pairs: &[IoPair]) -> Option<ValueCryptor> {
 }
 
 /// Synthesize the simplest chain (up to `max_len` ops) matching all pairs.
-/// Returns None when nothing matches within budget.
-pub fn synthesize(pairs: &[IoPair], max_len: usize) -> Option<ValueCryptor> {
+/// Budget-bounded: at most `budget` skeleton evaluations, then None.
+/// Pass `budget = usize::MAX` for exhaustive (may hang on long chains).
+pub fn synthesize_budget(
+    pairs: &[IoPair], max_len: usize, budget: usize,
+) -> Option<ValueCryptor> {
     if pairs.is_empty() {
         return None;
     }
-    // breadth-first over lengths: simplest first; skeletons per
-    // length enumerated as base-|SKEL_OPS| counter (no wrap bugs).
+    let mut spent = 0usize;
     for len in 0..=max_len {
         if len == 0 {
             let id = ValueCryptor::new(CryptSize::Byte);
@@ -93,6 +95,10 @@ pub fn synthesize(pairs: &[IoPair], max_len: usize) -> Option<ValueCryptor> {
         }
         let total = SKEL_OPS.len().pow(len as u32);
         for n in 0..total {
+            if spent >= budget {
+                return None;
+            }
+            spent += 1;
             let mut skel = Vec::with_capacity(len);
             let mut x = n;
             for _ in 0..len {
@@ -105,6 +111,12 @@ pub fn synthesize(pairs: &[IoPair], max_len: usize) -> Option<ValueCryptor> {
         }
     }
     None
+}
+
+/// Synthesize the simplest chain (up to `max_len` ops) matching all pairs.
+/// Returns None when nothing matches within budget.
+pub fn synthesize(pairs: &[IoPair], max_len: usize) -> Option<ValueCryptor> {
+    synthesize_budget(pairs, max_len, usize::MAX)
 }
 
 #[cfg(test)]
