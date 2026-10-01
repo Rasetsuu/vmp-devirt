@@ -19,7 +19,7 @@ import sys
 from collections import Counter, defaultdict
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
 
-FORCE_EDGE = "/home/ciupix/vmp_devirt_prod/target/release/force_edge"
+FORCE_EDGE = os.environ.get("FORCE_EDGE", "./target/release/force_edge")
 START = os.environ.get("START", "0x14077c26d")
 
 
@@ -129,7 +129,7 @@ def main():
                 r2 = subprocess.run(
                     ["./target/debug/devirt", "mine-hits", dd + "/forced.json"],
                     capture_output=True, text=True, timeout=120,
-                    cwd="/home/ciupix/RE/vmp-devirt")
+                    cwd=os.environ.get("REPO_ROOT", "."))
                 for l in r2.stdout.splitlines():
                     if l.startswith("site "):
                         chains += 1

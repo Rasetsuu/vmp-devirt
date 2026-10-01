@@ -34,7 +34,7 @@ fn block_bytes(snaps: &[(u64, Vec<u8>)], va: u64) -> Option<Vec<u8>> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/home/ciupix/RE/vmp-research/data".to_string());
+    let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
     let tb = std::fs::read(format!("{}/open_trace.bin", dir))?;
     let trace: Vec<u64> = tb.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
     use vmp_devirt::frontend::fetch_finder::load_snapshots;

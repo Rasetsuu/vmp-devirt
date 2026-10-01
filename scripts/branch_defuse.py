@@ -7,7 +7,7 @@ import os
 import struct
 from collections import defaultdict
 
-D = os.environ.get("DATA_DIR", "/home/ciupix/RE/vmp-research/data/gadd_br")
+D = os.environ.get("DATA_DIR", os.environ.get("DATA_DIR", "./data/gadd_br"))
 REGS = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rbp"]
 
 h = json.load(open(D + "/open_hits.json"))

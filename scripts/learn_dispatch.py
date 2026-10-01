@@ -24,7 +24,7 @@ REGS = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10",
 
 def main():
     d = sys.argv[1] if len(sys.argv) > 1 else \
-        "/home/ciupix/RE/vmp-research/data/gadd_br"
+        os.environ.get("DATA_DIR", "./data/gadd_br")
     depth = int(sys.argv[2]) if len(sys.argv) > 2 else 3
     h = json.load(open(d + "/open_hits.json"))
     raw = open(d + "/open_trace.bin", "rb").read()

@@ -71,7 +71,7 @@ fn main() -> anyhow::Result<()> {
     if !perturb.is_empty() {
         eprintln!("perturb on {:#x}: {} regs{}", force_site, perturb.len(), if perturb_only { " (no rip override)" } else { "" });
     }
-    let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/home/ciupix/RE/vmp-research/data".to_string());
+    let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
     // Derailment guard: baseline-known address set + consecutive-unknown budget.
     let known: std::collections::HashSet<u64> = std::env::var("KNOWN_BIN").ok()
         .and_then(|p| std::fs::read(p).ok())

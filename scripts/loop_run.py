@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEVIRT = "/home/ciupix/RE/vmp-devirt/target/debug/devirt"
+DEVIRT = os.environ.get("DEVIRT", "./target/debug/devirt")
 
 
 def run(cmd, **kw):

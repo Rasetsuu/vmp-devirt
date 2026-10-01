@@ -6,8 +6,7 @@ import os
 import subprocess
 import sys
 
-LIFT = os.environ.get("REMILL_LIFT",
-        "/home/ciupix/RE/tools/remill/build/bin/lift/remill-lift-22")
+LIFT = os.environ.get("REMILL_LIFT", "remill-lift-22")  # PATH lookup; override via REMILL_LIFT
 
 
 def main():

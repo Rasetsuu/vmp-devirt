@@ -23,6 +23,8 @@ pub struct MinedCryptor {
     pub aux_src: Option<String>,
     /// Number of chain ops mined (excluding the key-mix xor).
     pub steps: usize,
+    /// ALU-mnemonic insns skipped as unmodeled (auditable, not silent).
+    pub skipped: usize,
 }
 
 /// Low-8 register for a GPR (ESI -> SIL, R9D -> R9B, AL -> AL).
@@ -68,6 +70,7 @@ pub fn mine_cryptor_with(
     let mut cryptor = ValueCryptor::new(CryptSize::Byte);
     let mut key_reg = String::new();
     let mut steps = 0usize;
+    let mut skipped = 0usize;
     let mut found_key_mix = false;
     let mut visited: HashSet<u64> = HashSet::new();
     // (ip, call_depth): follow direct calls once (call-hidden cryptors).
@@ -182,7 +185,7 @@ pub fn mine_cryptor_with(
                         Mnemonic::Dec => { cryptor.add(CryptOp::Dec, 0); steps += 1; }
                         Mnemonic::Neg => { cryptor.add(CryptOp::Neg, 0); steps += 1; }
                         Mnemonic::Not => { cryptor.add(CryptOp::Not, 0); steps += 1; }
-                        _ => {}
+                        _ => { skipped += 1; }
                     }
                 }
                 _ => {}
@@ -196,7 +199,7 @@ pub fn mine_cryptor_with(
     }
     // steps==0 with key mix found = identity cryptor (opcode = raw ^ key),
     // e.g. RBX-family `movzx edx,[rbx] ... xor dl,bpl; jmp`.
-    Ok(MinedCryptor { site_va: site.va, cryptor, key_reg, aux_src, steps })
+    Ok(MinedCryptor { site_va: site.va, cryptor, key_reg, aux_src, steps, skipped })
 }
 
 /// File-backed mining (static bytes). For runtime-decrypted regions use

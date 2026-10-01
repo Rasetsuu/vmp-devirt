@@ -8,7 +8,7 @@ from collections import defaultdict
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
 from capstone.x86 import *
 
-D = os.environ.get("DATA_DIR", "/home/ciupix/RE/vmp-research/data/gadd_br")
+D = os.environ.get("DATA_DIR", os.environ.get("DATA_DIR", "./data/gadd_br"))
 
 FLAG_WRITERS = {"add", "sub", "cmp", "and", "or", "xor", "test", "neg",
                 "mul", "imul", "shl", "shr", "sal", "sar", "rol", "ror",

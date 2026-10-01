@@ -29,7 +29,7 @@ fn main() -> anyhow::Result<()> {
     watches.insert(watch_arg);
     if entry_mode {
         let secname = std::env::var("SECNAME").unwrap_or_else(|_| ".vmp1".to_string());
-        if let Ok(txt) = std::fs::read_to_string(std::env::var("WATCH_FILE").unwrap_or_else(|_| format!("{}/watch.txt", std::env::var("DATA_DIR").unwrap_or_else(|_| "/home/ciupix/RE/vmp-research/data".to_string())))) {
+        if let Ok(txt) = std::fs::read_to_string(std::env::var("WATCH_FILE").unwrap_or_else(|_| format!("{}/watch.txt", std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string())))) {
             for l in txt.lines() {
                 if let Ok(v) = u64::from_str_radix(l.trim().trim_start_matches("0x"), 16) { watches.insert(v); }
             }
@@ -412,7 +412,7 @@ fn main() -> anyhow::Result<()> {
                 // Mid-run snapshot: first time execution leaves the staged sweep area.
                 if dump_trace && !staged_dumped && addr >= 0x900000 && count > 100000 {
                     staged_dumped = true;
-                    let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/home/ciupix/RE/vmp-research/data".to_string());
+                    let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
                     for (va, sz, tag) in [(0x300000u64, 0x600000usize, "staged_mid"), (0x71000000u64, 0x100000usize, "heap_mid")] {
                         let mut mb = vec![0u8; sz];
                         if emu.mem_read(va, &mut mb).is_ok() {
@@ -476,7 +476,7 @@ fn main() -> anyhow::Result<()> {
                     buf.extend_from_slice(&(*size as u64).to_le_bytes());
                     buf.extend_from_slice(&val.to_le_bytes());
                 }
-                let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/home/ciupix/RE/vmp-research/data".to_string());
+                let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
                 let _ = std::fs::write(format!("{}/open_memlog.bin", dir), &buf);
                 eprintln!("  wrote {} mem accesses", ml.len());
             }
@@ -484,7 +484,7 @@ fn main() -> anyhow::Result<()> {
                 let full = full.lock().unwrap();
                 let mut buf = Vec::with_capacity(full.len() * 8);
                 for a in full.iter() { buf.extend_from_slice(&a.to_le_bytes()); }
-                let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/home/ciupix/RE/vmp-research/data".to_string());
+                let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
                 std::fs::create_dir_all(&dir).ok();
                 let _ = std::fs::write(format!("{}/open_trace.bin", dir), &buf);
                 eprintln!("  wrote {} trace addrs", full.len());
@@ -529,7 +529,7 @@ fn main() -> anyhow::Result<()> {
             }
             // Persist stream for stage-2 decoder (canonical RE data path).
             if entry_mode && !hits.is_empty() {
-                let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/home/ciupix/RE/vmp-research/data".to_string());
+                let dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
                 std::fs::create_dir_all(&dir).ok();
                 let mut f = String::from("[\n");
                 for (i, (a, rax, rsi, rdx, rbx, rbp, r10, raw, rcx, rdi, r8, r9, r11, braw, code)) in hits.iter().enumerate() {

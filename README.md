@@ -82,7 +82,8 @@ commercial fixtures (sample-gated tests skip; `tests/smoke.rs` always runs).
 | `BIN_PATH` | target binary path (tools default: `./target.exe` placeholder) | target binary |
 | `IAT_JSON` | — | `{api_name: iat_va}` import stub map |
 | `VMP_TEST_BIN` / `VMP_ORACLE` | `tests/fixtures/…` | licensed-sample tests |
-| `REMILL_LIFT` | `remill-lift` on PATH | Remill lift binary |
+| `REMILL_LIFT` | `remill-lift-22` on PATH | Remill lift binary |
+| `DEVIRT` / `FORCE_EDGE` / `REPO_ROOT` | `./target/…` / `.` | script-called binaries + repo root |
 | `VMP_WORK_DIR` | system temp | lift scratch |
 | `EFLAGS` / `IN_RET` / `DLL_MAIN` | — | snapshot state variants |
 

@@ -52,7 +52,7 @@ proof first, automation second, research arcs last.
   net-new handlers without manual steps.
 
 ### 2.3 Publish [READY, needs owner]
-- Repo audited (no binaries/targets, MIT + dependency notes, CI).
+- Repo audited (no binaries/targets, no hardcoded user paths — all env-driven, MIT + dependency notes, CI).
 - One command: `gh repo create vmp-devirt --public --source=. --push`.
 - Blocked on: owner account action only.
 

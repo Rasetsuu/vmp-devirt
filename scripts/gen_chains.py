@@ -8,7 +8,7 @@ import sys
 
 BIN, OUT = sys.argv[1], sys.argv[2]
 N = int(sys.argv[3]) if len(sys.argv) > 3 else 40
-DEVIRT = "/home/ciupix/RE/vmp-devirt/target/debug/devirt"
+DEVIRT = os.environ.get("DEVIRT", "./target/debug/devirt")
 
 scan = subprocess.run([DEVIRT, "scan", BIN], capture_output=True, text=True, timeout=300)
 vas = re.findall(r"handler candidate (0x[0-9a-f]+)", scan.stdout)[:N]

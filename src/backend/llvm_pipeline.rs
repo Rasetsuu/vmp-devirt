@@ -1,6 +1,6 @@
 //! LLVM pipeline for VMP 3.9.4 — now default (requires LLVM 22).
 //!
-//! Creates a real LLVM `Context`/`Module` and will run the 6 passes `mogvmp` uses:
+//! Creates a real LLVM `Context`/`Module` and will run a standard 6-pass set:
 //! `mem2reg → gvn → instcombine → sccp → dse → simplifycfg`.
 //! Your installed `LLVM 22.1.8` (134 MB) is auto-detected via `llvm-config`.
 
@@ -19,7 +19,7 @@ pub fn optimize_remill_ir(ir: &str, va: u64) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Run the 6 mogvmp passes on a lifted handler and return optimized IR.
+/// Run the standard 6-pass set on a lifted handler and return optimized IR.
 /// Remill IR (contains `%struct.State`) goes through real `opt -O3`;
 /// legacy textual IR keeps the `junk`-line filter for backward compat.
 pub fn optimize_lifted(handler: &LiftedHandler) -> String {
@@ -74,7 +74,7 @@ pub fn run_demo() -> anyhow::Result<String> {
         let ir_before = std::ffi::CStr::from_ptr(raw_ptr).to_string_lossy().into_owned();
         // LLVMDisposeMessage(raw_ptr); // not needed for demo
 
-        // Create PassManager and add the 6 mogvmp passes via the new PassManager would need `LLVMRunPassManager`.
+        // Create PassManager and add the standard passes via the new PassManager would need `LLVMRunPassManager`.
         // For demo we just show we linked; full PassManager wiring will use `LLVMPassManagerBuilder`.
         // Keep it simple: we already proved link works by creating module + verify.
 

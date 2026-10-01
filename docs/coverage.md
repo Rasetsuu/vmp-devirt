@@ -39,7 +39,7 @@ reg-destination writers (`dec r9` + `jne`) reads straight from the
 snapshot instead of re-applying the writer (old code double-counted,
 2 misses at counter wrap). Pure writers (`cmp`/`test`) unchanged.
 
-## Chain verification (mined => verified)
+## Chain verification (one-site consistency + differential)
 
 `scripts/chain_verify.py`: group watch-hit visits by decoded opcode,
 require equal opcodes to predict equal next-handlers (trace order).
