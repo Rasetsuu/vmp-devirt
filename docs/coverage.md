@@ -190,6 +190,25 @@ key=dil, Neg→Not→Neg→Ror1).
 Key-register sets differ per mode: per-mode mining is required, a
 single watchlist/cryptor does not transfer.
 
+## Diversity (same source, fresh VMProtect 3.9.4 builds, zero new rules)
+
+`scripts/diversity/` (templates + recipe; binaries local-only):
+repro (defaults re-run), divA (packing project), divB (renamed VM section).
+All compute `done e38e3794`. Pipeline run unchanged:
+
+| Binary | Scan sites | Mine /40 | Synth agree |
+|---|---|---|---|
+| vmp_add2 (ship) | 500+ (cap) | 23 | 19/19 |
+| repro | 500 (cap) | 30 | 24/0 |
+| divA (2.5MB) | 212 | 25 | 22/0 |
+| divB (2.5MB) | 207 | 22 | 22/0 |
+
+Key-reg alphabet same, weights reshuffled per build (repro r11l/r9l,
+divA r9l-heavy, divB dil/bl) — VMP re-randomizes every protection
+(repro ≠ shipped bytes). VTIL rules compress chains on all three
+fresh binaries. Miner/synth transfer with no changes; trace stages
+(branch/brighten-corpus/replay) queued per binary on demand.
+
 ## Saturn-subset brightening
 
 `devirt brighten` (`src/backend/brighten.rs`): constant-pool folding +
