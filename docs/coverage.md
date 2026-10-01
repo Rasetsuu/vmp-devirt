@@ -223,6 +223,11 @@ All compute `done e38e3794`. Pipeline run unchanged:
 | 3.8.7 | 565 | 28 | 26/0 | movzx (eax/edx-heavy) |
 | 3.9.4 ship | 500+ | 23 | 19/19 | movzx/movsx |
 | 3.9.6 | 440 | 23 | 21/0 | movzx 21/21 |
+| 3.9.6 costum | 1311 | 11 | 9/0 | same alphabet |
+
+Higher complexity multiplies code surface (3x sites), not crypto:
+same key regs, same step shapes, synth 9/9. Mine-rate dip is sample
+composition (first-40 lands in junk regions), not harder chains.
 
 Key-reg alphabet same, weights reshuffled per build (repro r11l/r9l,
 divA r9l-heavy, divB dil/bl) — VMP re-randomizes every protection
