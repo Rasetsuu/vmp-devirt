@@ -12,3 +12,4 @@ pub mod sensor;
 pub mod dispatch;
 pub mod handlers;
 pub mod synth;
+pub mod brighten;

@@ -22,9 +22,11 @@ fn main() -> Result<()> {
         eprintln!("  devirt mine-live <snapdir> <site-va>  # mine chain from snapshot overlay (live bytes)");
         eprintln!("  devirt mine-hits <open_hits.json>     # mine all hit sites from hit-time code");
         eprintln!("  devirt synth <chains.json>           # cross-check mined chains by re-synthesis");        eprintln!("  devirt handlers <trace> <memlog> <bin>  # handler blocks via vctx-stores + back-slice");
+        eprintln!("  devirt brighten <ll> [--regs <json> --pool <json> --image <bin> --base <hex> --out <ll>]");
+        eprintln!("                                           # Saturn-subset: const-pool fold + stack slots");
         std::process::exit(2);
     }
-    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers", "synth"].contains(&args[1].as_str()) {
+    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers", "synth", "brighten"].contains(&args[1].as_str()) {
         // Merge/sense/dispatch/mine-live/mine-hits/handlers work on raw
         // files, not PEs (handlers takes its binary as args[4]).
         None
@@ -456,6 +458,83 @@ fn main() -> Result<()> {
                 agree, disagree.len(), skipped, m.len());
             for s in disagree.iter().take(10) {
                 println!("  MISMATCH {}", s);
+            }
+        }
+        other if other == "brighten" => {
+            if args.len() < 3 {
+                eprintln!("brighten needs <file.ll> [--regs <json> --pool <json> --image <bin> --base <hex> --out <ll>]");
+                std::process::exit(2);
+            }
+            use vmp_devirt::backend::brighten::brighten;
+            // flag parser: --key value pairs after the .ll path
+            let mut regs_p = None::<String>;
+            let mut pool_p = None::<String>;
+            let mut image_p = None::<String>;
+            let mut base = 0x1400_00000u64;
+            let mut out_p = None::<String>;
+            let mut i = 3;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--regs" => { regs_p = Some(args[i + 1].clone()); i += 2; }
+                    "--pool" => { pool_p = Some(args[i + 1].clone()); i += 2; }
+                    "--image" => { image_p = Some(args[i + 1].clone()); i += 2; }
+                    "--base" => {
+                        base = u64::from_str_radix(args[i + 1].trim_start_matches("0x"), 16)?;
+                        i += 2;
+                    }
+                    "--out" => { out_p = Some(args[i + 1].clone()); i += 2; }
+                    f => {
+                        eprintln!("brighten: unknown flag {}", f);
+                        std::process::exit(2);
+                    }
+                }
+            }
+            let ir = std::fs::read_to_string(&args[2])?;
+            let regs: std::collections::HashMap<String, u64> = match regs_p {
+                Some(p) => {
+                    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p)?)?;
+                    v.as_object().context("regs json must be an object")?.iter()
+                        .map(|(k, v)| (k.to_lowercase(), v.as_u64().unwrap_or(0)))
+                        .collect()
+                }
+                None => Default::default(),
+            };
+            // pool json: {"ranges": [[start, len], ...]} (ints, hex strings ok)
+            let pools: Vec<(u64, u64)> = match pool_p {
+                Some(p) => {
+                    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p)?)?;
+                    let mut r = Vec::new();
+                    for e in v.get("ranges").and_then(|x| x.as_array()).cloned().unwrap_or_default() {
+                        let num = |x: &serde_json::Value| -> u64 {
+                            if let Some(n) = x.as_u64() {
+                                n
+                            } else {
+                                u64::from_str_radix(x.as_str().unwrap_or("0").trim_start_matches("0x"), 16).unwrap_or(0)
+                            }
+                        };
+                        if let Some(a) = e.as_array() {
+                            if a.len() >= 2 {
+                                r.push((num(&a[0]), num(&a[1])));
+                            }
+                        }
+                    }
+                    r
+                }
+                None => Vec::new(),
+            };
+            let image: Vec<u8> = match image_p {
+                Some(p) => std::fs::read(&p)?,
+                None => Vec::new(),
+            };
+            let o = brighten(&ir, &regs, &pools, &image, base, 0);
+            if let Some(p) = out_p {
+                std::fs::write(&p, &o.ir)?;
+            } else {
+                println!("{}", o.ir);
+            }
+            eprintln!("brighten: folds={} slots={}", o.folds, o.slots.len());
+            for s in o.slots.iter().take(20) {
+                eprintln!("  slot rsp{:+} w={} {}", s.offset, s.width, if s.is_write { "wr" } else { "rd" });
             }
         }
         other => {
