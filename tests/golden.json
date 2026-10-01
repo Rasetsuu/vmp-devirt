@@ -1,0 +1,31 @@
+{
+  "_note": "Golden baselines. Tier-2 local check only (needs samples). Missing paths skip, never fail.",
+  "vmp_add2": {
+    "bin": "samples/vmp_add2.exe",
+    "scan_min_sites": 500,
+    "mine_sample": 40,
+    "mine_min": 20,
+    "synth_disagree_max": 0
+  },
+  "vmp_diversity": {
+    "repro":   { "scan": 500, "mine": 30, "synth_agree": 24 },
+    "divA":    { "scan": 212, "mine": 25, "synth_agree": 22 },
+    "divB":    { "scan": 207, "mine": 22, "synth_agree": 22 }
+  },
+  "vmp_dispatch_gadd": {
+    "trace": "data/gadd/open_trace.bin",
+    "bin": "samples/vmp_add2.exe",
+    "multi_indirect": 101,
+    "multi_branch": 8
+  },
+  "vmp_branches": {
+    "perfect_sites": 5,
+    "counts": [2202, 88, 3996, 779, 100]
+  },
+  "tigress": {
+    "switch":   { "fetch_hits": 5500, "multi_indirect": 0, "multi_branch": 7 },
+    "direct":   { "multi_indirect": 1, "multi_branch": 1 },
+    "indirect": { "multi_indirect": 1, "multi_branch": 1, "max_targets": 7 },
+    "call":     { "multi_indirect": 1, "multi_branch": 2 }
+  }
+}
