@@ -2,6 +2,7 @@
 """Mine N scan sites and save chains JSON for chain_verify.py.
 Usage: gen_chains.py <binary> <out.json> [n]"""
 import json
+import os
 import re
 import subprocess
 import sys

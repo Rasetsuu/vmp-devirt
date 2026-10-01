@@ -215,6 +215,15 @@ All compute `done e38e3794`. Pipeline run unchanged:
 | divA (2.5MB) | 212 | 25 | 22/0 |
 | divB (2.5MB) | 207 | 22 | 22/0 |
 
+## Version matrix (same source, user-built per version, zero new rules)
+
+| Build | Scan | Mine /40 | Synth agree | Fetch @ mined sites |
+|---|---|---|---|---|
+| 3.8.0 | 236 | 18 | 14/0 | movzx/movsx |
+| 3.8.7 | 565 | 28 | 26/0 | movzx (eax/edx-heavy) |
+| 3.9.4 ship | 500+ | 23 | 19/19 | movzx/movsx |
+| 3.9.6 | 440 | 23 | 21/0 | movzx 21/21 |
+
 Key-reg alphabet same, weights reshuffled per build (repro r11l/r9l,
 divA r9l-heavy, divB dil/bl) — VMP re-randomizes every protection
 (repro ≠ shipped bytes). VTIL rules compress chains on all three
