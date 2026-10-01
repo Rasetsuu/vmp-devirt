@@ -22,36 +22,41 @@ REGS = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10",
         "r11", "rbp", "rsp"]
 
 
-def main():
-    d = sys.argv[1] if len(sys.argv) > 1 else \
-        os.environ.get("DATA_DIR", "./data/gadd_br")
-    depth = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+def load_dir(d):
     h = json.load(open(d + "/open_hits.json"))
     raw = open(d + "/open_trace.bin", "rb").read()
-    trs = struct.unpack("<%dQ" % (len(raw) // 8), raw)
-    pos = defaultdict(list)
-    for i, a in enumerate(trs):
-        if len(pos) < 600000:
-            pos[a].append(i)
+    return h, struct.unpack("<%dQ" % (len(raw) // 8), raw)
+
+
+def main():
+    # multi-dir merge (colon-separated): cross-run corpora for path-exclusive
+    # branches (each run sees one outcome; merged, both appear). Single dir
+    # behaves as before.
+    ds = (sys.argv[1] if len(sys.argv) > 1 else
+          os.environ.get("DATA_DIR", "./data/gadd_br")).split(":")
+    depth = int(sys.argv[2]) if len(sys.argv) > 2 else 3
     by_site = defaultdict(list)
-    for x in h:
-        by_site[x["site"]].append(x)
+    for d in ds:
+        h, trs = load_dir(d)
+        pos = defaultdict(list)
+        for i, a in enumerate(trs):
+            if len(pos) < 600000:
+                pos[a].append(i)
+        per = defaultdict(list)
+        for x in h:
+            per[x["site"]].append(x)
+        for site, rows in per.items():
+            va = int(site, 16)
+            occ = pos.get(va, [])
+            for k, x in enumerate(rows):
+                if k < len(occ) and occ[k] + 1 < len(trs):
+                    by_site[site].append((x, trs[occ[k] + 1]))
     print("sites=%d hits=%d" % (len(by_site), len(h)))
     learned = 0
     rules = {}
     for site, rows in sorted(by_site.items(), key=lambda kv: -len(kv[1])):
-        va = int(site, 16)
-        occ = pos.get(va, [])
-        X, y, outs = [], [], []
-        seen = 0
-        for x in rows:
-            if seen >= len(occ) or occ[seen] + 1 >= len(trs):
-                seen += 1
-                continue
-            nx = trs[occ[seen] + 1]
-            seen += 1
-            X.append([x.get(r, 0) or 0 for r in REGS])
-            outs.append(nx)
+        X = [[x.get(r, 0) or 0 for r in REGS] for x, _ in rows]
+        outs = [o for _, o in rows]
         if len(X) < 20:
             continue
         # binary labels: most-common successor vs rest
@@ -73,6 +78,10 @@ def main():
             ca, cb = feats[a], feats[b]
             feats["%s>%s" % (a, b)] = [1 if x > y else 0 for x, y in zip(ca, cb)]
             feats["%s==%s" % (a, b)] = [1 if x == y else 0 for x, y in zip(ca, cb)]
+        # unary vs-zero (test-fed branches: je <=> reg==0). Tried first:
+        # cheapest, most causal; relational proxies also score 1.0.
+        for r in REGS:
+            feats["%s==0" % r] = [1 if v == 0 else 0 for v in feats[r]]
         names = sorted(feats)
         scored = []
         for nm in names:
@@ -83,6 +92,10 @@ def main():
         scored.sort(reverse=True)
         print("  top relational: %s" %
               ", ".join("%s=%.4f" % (nm, s) for s, nm in scored[:4]))
+        uz = [(s, nm) for s, nm in scored if nm.endswith("==0")]
+        if uz:
+            uz.sort(reverse=True)
+            print("  unary-zero: %s=%.4f" % (uz[0][1], uz[0][0]))
         if scored and scored[0][0] >= 0.99:
             rules[site] = {"rule": scored[0][1], "acc": round(scored[0][0], 4),
                            "base": top, "visits": len(X)}
