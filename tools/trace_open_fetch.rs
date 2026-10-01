@@ -98,6 +98,38 @@ fn main() -> anyhow::Result<()> {
             }
         }
     }
+    // ELF PLT stub table (PLT_STUBS=1): plt_va -> libc name, from
+    // .rela.plt order (push-imm index) + dynsym/dynstr. Manual section
+    // parsing (no dynamic-API dependence).
+    let mut plt_stubs = std::collections::HashMap::new();
+    if std::env::var("PLT_STUBS").is_ok() {
+        if let Ok(elf) = bin.parse_elf() {
+            if let (Ok(plt), Ok(rela)) = (bin.get_section(".plt"), bin.get_section(".rela.plt")) {
+                // plt base VA
+                let plt_va = bin.map_sections().ok().and_then(|m| {
+                    m.into_iter().find(|(n, _, _, _, _)| n == ".plt").map(|(_, va, _, _, _)| va)
+                }).unwrap_or(0);
+                // rela entries: (r_offset:64, r_info:64, addend:64); sym = r_info >> 32
+                let mut names: Vec<String> = Vec::new();
+                for c in rela.chunks_exact(24) {
+                    let info = u64::from_le_bytes(c[8..16].try_into().unwrap_or([0; 8]));
+                    let sym = (info >> 32) as usize;
+                    let nm = elf.dynsyms.to_vec().get(sym)
+                        .and_then(|s| elf.dynstrtab.get_at(s.st_name))
+                        .unwrap_or("").to_string();
+                    names.push(nm);
+                }
+                // entries start after the 16-byte resolver slot, 16 bytes each
+                for (i, nm) in names.iter().enumerate() {
+                    if ["memcpy", "memset", "memmove"].contains(&nm.as_str()) {
+                        plt_stubs.insert(plt_va + 16 + i as u64 * 16, nm.clone());
+                    }
+                }
+            }
+        }
+        eprintln!("  PLT stubs: {} ({:?})", plt_stubs.len(),
+            plt_stubs.values().collect::<Vec<_>>());
+    }
     let sites = [start];
     // EFLAGS variants to force jle taken (ZF=1) / not-taken, etc.
     // Entry mode: EFLAGS env override (multi-state coverage runs).
@@ -389,7 +421,36 @@ fn main() -> anyhow::Result<()> {
             let w = watches.clone();
             let sm = sitemap.clone();
             // Full-range hook: image + heap/stubs (VM stages code in heap).
+            // ELF PLT semantic stubs (PLT_STUBS=1): libc calls through the
+            // PLT (memcpy/memset/memmove for VM table init) would otherwise
+            // "return" via the zero-page ret stub without doing anything.
+            // Emulate semantics host-side, then skip past the call.
+            let plt = plt_stubs.clone();
             let hook_all = emu.add_code_hook(1, 0, move |emu, addr, _size| {
+                if let Some(name) = plt.get(&addr) {
+                    let g = |r: RegisterX86| -> u64 { emu.reg_read(r).unwrap_or(0) };
+                    let (dst, src, len) = (g(RegisterX86::RDI), g(RegisterX86::RSI), g(RegisterX86::RDX));
+                    let rsp: u64 = g(RegisterX86::RSP);
+                    let mut rb = [0u8; 8];
+                    let ret = emu.mem_read(rsp, &mut rb).map(|_| u64::from_le_bytes(rb)).unwrap_or(0);
+                    let ok = (len as usize) < 0x1000000 && match name.as_str() {
+                        "memcpy" | "memmove" => {
+                            let mut b = vec![0u8; len as usize];
+                            emu.mem_read(src, &mut b).is_ok() && emu.mem_write(dst, &b).is_ok()
+                        }
+                        "memset" => {
+                            let b = vec![(src & 0xFF) as u8; len as usize];
+                            emu.mem_write(dst, &b).is_ok()
+                        }
+                        _ => false,
+                    };
+                    if ok {
+                        let _ = emu.reg_write(RegisterX86::RAX, dst);
+                        let _ = emu.reg_write(RegisterX86::RSP, rsp + 8);
+                        let _ = emu.reg_write(RegisterX86::RIP, ret);
+                    }
+                    return;
+                }
                 // NOTE: single count per traced insn (was double-counted
                 // with the increment below; bounds/steps were 2x real).
                 // Slide fast-forward: zero padding executes as `add [rax],al` slides.
