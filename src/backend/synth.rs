@@ -75,6 +75,136 @@ fn solve_skeleton(skel: &[CryptOp], pairs: &[IoPair]) -> Option<ValueCryptor> {
     }
 }
 
+/// Canonical simplifier for linear chains, adapted from the VTIL
+/// Project's table-driven rules (`VTIL-SymEx/simplifier/directives.hpp`,
+/// BSD-3-Clause, (c) 2020 Can Bölük). VTIL's rules target binary
+/// expression trees; chains here are unary pipelines, so only the
+/// linear subset ports: double-inverse cancel, identity drop, adjacent
+/// same-family folding, and the Neg/Not pair identities
+/// (`-(~A)=A+1`, `~(-A)=A-1`). No reordering across families
+/// (rotates/arithmetic do not commute). Fixed-point, bounded.
+/// Returns an equivalent chain with minimal op count.
+pub fn simplify_chain(chain: &ValueCryptor) -> ValueCryptor {
+    let (mask, bits) = match chain.size {
+        CryptSize::Byte => (0xFFu64, 8u32),
+        CryptSize::Word => (0xFFFFu64, 16u32),
+        CryptSize::DWord => (0xFFFF_FFFFu64, 32u32),
+        CryptSize::QWord => (0xFFFF_FFFF_FFFF_FFFFu64, 64u32),
+    };
+    // Work on (op, value) pairs; fixed ops carry 0.
+    let mut ops: Vec<(CryptOp, u64)> =
+        chain.cmds.iter().map(|c| (c.op, c.value & mask)).collect();
+    for _ in 0..16 {
+        let mut out: Vec<(CryptOp, u64)> = Vec::with_capacity(ops.len());
+        let mut changed = false;
+        let mut i = 0;
+        while i < ops.len() {
+            // Two-op peephole on (ops[i], ops[i+1]).
+            if i + 1 < ops.len() {
+                let (a, av) = ops[i];
+                let (b, bv) = ops[i + 1];
+                // Double-inverse cancel (VTIL: -(-A)=A, ~(~A)=A).
+                if (a == CryptOp::Neg && b == CryptOp::Neg)
+                    || (a == CryptOp::Not && b == CryptOp::Not)
+                    || (a == CryptOp::Inc && b == CryptOp::Dec)
+                    || (a == CryptOp::Dec && b == CryptOp::Inc)
+                {
+                    changed = true;
+                    i += 2;
+                    continue;
+                }
+                // Neg/Not pairs (VTIL: -(~A)=A+1, ~(-A)=A-1).
+                if a == CryptOp::Neg && b == CryptOp::Not {
+                    changed = true;
+                    out.push((CryptOp::Dec, 0));
+                    i += 2;
+                    continue;
+                }
+                if a == CryptOp::Not && b == CryptOp::Neg {
+                    changed = true;
+                    out.push((CryptOp::Inc, 0));
+                    i += 2;
+                    continue;
+                }
+                // Same-family Xor fold (VTIL identity A^0=A, const A^A=0).
+                if a == CryptOp::Xor && b == CryptOp::Xor {
+                    changed = true;
+                    let v = (av ^ bv) & mask;
+                    if v != 0 {
+                        out.push((CryptOp::Xor, v));
+                    }
+                    i += 2;
+                    continue;
+                }
+                // Add/Sub/Inc/Dec net folding (VTIL: A+0=A, A+(-B)=A-B).
+                if matches!(a, CryptOp::Add | CryptOp::Sub | CryptOp::Inc | CryptOp::Dec)
+                    && matches!(b, CryptOp::Add | CryptOp::Sub | CryptOp::Inc | CryptOp::Dec)
+                {
+                    changed = true;
+                    let to_signed = |o: CryptOp, v: u64| -> i64 {
+                        match o {
+                            CryptOp::Add => (v & mask) as i64,
+                            CryptOp::Inc => 1,
+                            CryptOp::Sub => -((v & mask) as i64),
+                            _ => -1, // Dec
+                        }
+                    };
+                    let net = to_signed(a, av) + to_signed(b, bv);
+                    let m = mask as i64 + 1;
+                    let net = ((net % m) + m) % m;
+                    if net != 0 {
+                        if net == mask as i64 {
+                            out.push((CryptOp::Dec, 0));
+                        } else {
+                            out.push((CryptOp::Add, net as u64));
+                        }
+                    }
+                    i += 2;
+                    continue;
+                }
+                // Rotate merge (VTIL: rot-count modulo width).
+                if matches!(a, CryptOp::Rol | CryptOp::Ror)
+                    && matches!(b, CryptOp::Rol | CryptOp::Ror)
+                {
+                    changed = true;
+                    let signed = |o: CryptOp, v: u64| -> i64 {
+                        let r = ((v & 0xFF) % bits as u64) as i64;
+                        if o == CryptOp::Rol { r } else { -r }
+                    };
+                    let net = signed(a, av) + signed(b, bv);
+                    let net = ((net % bits as i64) + bits as i64) % bits as i64;
+                    if net != 0 {
+                        out.push((CryptOp::Rol, net as u64));
+                    }
+                    i += 2;
+                    continue;
+                }
+            }
+            // Single-op identities (VTIL: A^0=A, rotl(A,0)=A).
+            let (a, av) = ops[i];
+            match a {
+                CryptOp::Xor | CryptOp::Add | CryptOp::Sub if av & mask == 0 => {
+                    changed = true;
+                }
+                CryptOp::Rol | CryptOp::Ror if av % bits as u64 == 0 => {
+                    changed = true;
+                }
+                _ => out.push((a, av)),
+            }
+            i += 1;
+        }
+        ops = out;
+        if !changed {
+            break;
+        }
+    }
+    let mut c = ValueCryptor::new(chain.size);
+    for (op, v) in ops {
+        c.add(op, v);
+    }
+    c
+}
+
 /// Synthesize the simplest chain (up to `max_len` ops) matching all pairs.
 /// Budget-bounded: at most `budget` skeleton evaluations, then None.
 /// Pass `budget = usize::MAX` for exhaustive (may hang on long chains).
@@ -161,5 +291,59 @@ mod tests {
     #[test]
     fn empty_pairs_none() {
         assert!(synthesize(&[], 4).is_none());
+    }
+
+    fn chain_of(ops: &[(CryptOp, u64)]) -> ValueCryptor {
+        let mut c = ValueCryptor::new(CryptSize::Byte);
+        for (op, v) in ops {
+            c.add(*op, *v);
+        }
+        c
+    }
+
+    fn equiv(a: &ValueCryptor, b: &ValueCryptor) -> bool {
+        (0..=255u64).all(|x| a.encrypt(x) == b.encrypt(x))
+    }
+
+    #[test]
+    fn vtil_subset_rules() {
+        // Double-inverse cancel.
+        for (ops, want_len) in [
+            (&[(CryptOp::Neg, 0), (CryptOp::Neg, 0)][..], 0),
+            (&[(CryptOp::Not, 0), (CryptOp::Not, 0)][..], 0),
+            (&[(CryptOp::Inc, 0), (CryptOp::Dec, 0)][..], 0),
+            // Neg/Not identities.
+            (&[(CryptOp::Neg, 0), (CryptOp::Not, 0)][..], 1),
+            (&[(CryptOp::Not, 0), (CryptOp::Neg, 0)][..], 1),
+            // Same-family folds.
+            (&[(CryptOp::Xor, 0x12), (CryptOp::Xor, 0x34)][..], 1),
+            (&[(CryptOp::Xor, 0x42), (CryptOp::Xor, 0x42)][..], 0),
+            (&[(CryptOp::Add, 10), (CryptOp::Add, 20)][..], 1),
+            (&[(CryptOp::Add, 10), (CryptOp::Sub, 10)][..], 0),
+            (&[(CryptOp::Rol, 3), (CryptOp::Rol, 5)][..], 0), // 3+5=8=0 mod 8
+            (&[(CryptOp::Rol, 3), (CryptOp::Ror, 3)][..], 0),
+        ] {
+            let c = chain_of(ops);
+            let s = simplify_chain(&c);
+            assert_eq!(s.cmds.len(), want_len, "ops={ops:?} got={:?}", s.cmds);
+            assert!(equiv(&c, &s), "semantics changed for {ops:?}");
+        }
+        // Neg->Not spells Dec; Not->Neg spells Inc.
+        let dec = chain_of(&[(CryptOp::Dec, 0)]);
+        assert!(equiv(&chain_of(&[(CryptOp::Neg, 0), (CryptOp::Not, 0)]), &dec));
+        let inc = chain_of(&[(CryptOp::Inc, 0)]);
+        assert!(equiv(&chain_of(&[(CryptOp::Not, 0), (CryptOp::Neg, 0)]), &inc));
+        // Full-exhaustive equivalence on a mixed chain.
+        let mixed = chain_of(&[
+            (CryptOp::Xor, 0x5a),
+            (CryptOp::Xor, 0x5a),
+            (CryptOp::Neg, 0),
+            (CryptOp::Neg, 0),
+            (CryptOp::Add, 7),
+            (CryptOp::Sub, 7),
+            (CryptOp::Rol, 2),
+            (CryptOp::Ror, 2),
+        ]);
+        assert_eq!(simplify_chain(&mixed).cmds.len(), 0);
     }
 }

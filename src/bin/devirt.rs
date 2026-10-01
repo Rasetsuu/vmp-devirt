@@ -368,6 +368,7 @@ fn main() -> Result<()> {
                 eprintln!("synth needs <chains.json> (gen_chains.py output)");
                 std::process::exit(2);
             }
+            use vmp_devirt::backend::synth::simplify_chain;
             use vmp_devirt::backend::value_cryptor::{CryptOp, CryptSize, ValueCryptor};
             let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&args[2])?)?;
             let m = v.as_object().context("chains.json must be an object")?;
@@ -434,7 +435,19 @@ fn main() -> Result<()> {
                 }
                 // single substitutions toward fewer ops are covered by
                 // deletions of redundant pairs in practice; report.
-                if best < n {
+                // VTIL-rule canonical form (instant, no search).
+                let canon = simplify_chain(&chain);
+                // Cross-check: rule result must verify on probe inputs.
+                let cvec: Vec<(CryptOp, u64)> = canon.cmds.iter()
+                    .map(|c| (c.op, c.value)).collect();
+                if !probe(&cvec) {
+                    disagree.push(site.clone() + " (rule-unsound)");
+                    continue;
+                }
+                if canon.cmds.len() < best {
+                    println!("  {} compressible {} -> {} (subset) / {} (rules)",
+                        site, n, best, canon.cmds.len());
+                } else if best < n {
                     println!("  {} compressible {} -> {}", site, n, best);
                 }
                 agree += 1;
