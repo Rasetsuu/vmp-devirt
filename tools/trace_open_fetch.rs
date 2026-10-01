@@ -109,9 +109,15 @@ fn main() -> anyhow::Result<()> {
         for &eflags in if entry_mode { &eflags_entry[..] } else { &eflags_snap[..] } {
             for &key in &[0x42u64] {
             let mut emu = Unicorn::new(Arch::X86, Mode::MODE_64).unwrap();
+            // Page-align section maps (ELF sections are not page-aligned;
+            // Unicorn mem_map fails silently on unaligned bases).
+            let align_map = |va: u64, vsize: usize| -> (u64, u64) {
+                let start = va & !0xfff;
+                (((vsize as u64 + (va - start) + 0xfff) & !0xfff), start)
+            };
             for (va, off, rawsz, vsize, _n) in &vmp_sections {
-                let mapped = ((vsize + 0xfff) & !0xfff) as u64;
-                let _ = emu.mem_map(*va, mapped, Prot::ALL);
+                let (mapped, start) = align_map(*va, *vsize);
+                let _ = emu.mem_map(start, mapped, Prot::ALL);
                 if *rawsz > 0 {
                     let end = (*off + *rawsz).min(bin.data.len());
                     if *off < end { let _ = emu.mem_write(*va, &bin.data[*off..end]); }
@@ -124,8 +130,9 @@ fn main() -> anyhow::Result<()> {
                 for (va, off, rawsz, vsize, _n) in &vmp_sections {
                     let rva = va.wrapping_sub(base);
                     if rva == *va { continue; }
-                    let mapped = ((vsize + 0xfff) & !0xfff) as u64;
-                    if emu.mem_map(rva, mapped, Prot::ALL).is_ok() && *rawsz > 0 {
+                    let rstart = rva & !0xfff;
+                    let rsize = ((vsize + (rva - rstart) as usize + 0xfff) & !0xfff) as u64;
+                    if emu.mem_map(rstart, rsize, Prot::ALL).is_ok() && *rawsz > 0 {
                         let end = (*off + *rawsz).min(bin.data.len());
                         if *off < end { let _ = emu.mem_write(rva, &bin.data[*off..end]); }
                     }
@@ -293,11 +300,14 @@ fn main() -> anyhow::Result<()> {
             let in_ret: u32 = std::env::var("IN_RET").map(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).unwrap_or(0)).unwrap_or(0);
             let _in_hook = emu.add_insn_in_hook(move |_emu, _port, _size| in_ret).unwrap();
             // Log unmapped accesses with faulting RIP.
+            // RVA fixup is PE/VMP-only: on ELF (zero-filled BSS, libc-style
+            // tables) it hijacks execution into zero pages. PE-gated.
+            let rvafix_on = bin.fmt() == vmp_devirt::pe_loader::BinFmt::Pe;
             // Special: GetProcAddress slot points at 0xDEAD0000 -> log (module,name), emulate ret.
             let _mem_hook = emu.add_mem_hook(unicorn_engine::unicorn_const::HookType::MEM_UNMAPPED, 0, 0xffffffffffffffff, move |emu, _mtype, addr, _size, _val| {
                 // RVA fixup: small absolute targets are unrebased RVAs (custom tables).
                 // Redirect only if bytes decode sanely (valid, no privileged/data soup).
-                if addr < 0x1000000 {
+                if rvafix_on && addr < 0x1000000 {
                     let cand = base + addr;
                     let mut pb = [0u8; 16];
                     if emu.mem_read(cand, &mut pb).is_ok() {
