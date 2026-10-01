@@ -350,7 +350,12 @@ fn main() -> Result<()> {
             let bin = PEBinary::load(&args[4]).with_context(|| format!("load {}", args[4]))?;
             let map = bin.section_map()?;
             let uniq: std::collections::BTreeSet<u64> = trace.iter().cloned().collect();
+            // Segment openers: indirect jmp/call-reg (threaded dispatch)
+            // or multi-successor jcc (ifnest/switch dispatch). Same
+            // generalization as the dispatch CLI; back-slice needs no
+            // fetch patterns on either protector.
             let mut indirect: HashSet<u64> = HashSet::new();
+            let mut branches: HashSet<u64> = HashSet::new();
             for va in uniq {
                 let bytes = match bin.read_via(&map, va, 6) {
                     Some(b) => b,
@@ -358,14 +363,18 @@ fn main() -> Result<()> {
                 };
                 let mut d = iced_x86::Decoder::with_ip(64, &bytes, va, iced_x86::DecoderOptions::NONE);
                 let ins = d.decode();
-                if ins.mnemonic() == iced_x86::Mnemonic::Jmp
+                if (ins.mnemonic() == iced_x86::Mnemonic::Jmp
+                    || ins.mnemonic() == iced_x86::Mnemonic::Call)
                     && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
                 {
                     indirect.insert(va);
+                } else if ins.is_jcc_short_or_near() {
+                    branches.insert(va);
                 }
             }
-            let blocks = detect_handlers(&trace, &writes, &|va| indirect.contains(&va));
-            println!("writes={} indirect_jmps={} handlers={}", writes.len(), indirect.len(), blocks.len());
+            let is_opener = |va: u64| indirect.contains(&va) || branches.contains(&va);
+            let blocks = detect_handlers(&trace, &writes, &is_opener);
+            println!("writes={} openers={} (indirect {}) handlers={}", writes.len(), indirect.len() + branches.len(), indirect.len(), blocks.len());
             let mut ranked = blocks.clone();
             ranked.sort_by_key(|b| (b.executions, b.stores.len()));
             for b in ranked.iter().rev().take(25) {
