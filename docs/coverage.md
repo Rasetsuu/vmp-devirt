@@ -234,7 +234,10 @@ All compute `done e38e3794`. Pipeline run unchanged:
 | 3.9.6 ultra (mut+virt+antidbg max) | 352 | 24/40 | 24/0/0 | movzx 24/24 |
 | 3.2.0 ultra (same max) | 0 | 0/40 | — | no sites (mutation hides fetch) |
 | 3.2.0 no-debug x4 (0/virt/mut/ultra) | 1 each | 0 mined (3 false-pos, 1 empty steps=0) | — | antidebug worth exactly 1 strict-visible site; 3.2 codegen defeats miner regardless |
-| 2.0.5 demo | 0 | 0 (v2 table dispatch — v3 scanner N/A) | — | — (v2 frontend parked, sample in hand) |
+| 2.0.5 demo | v1-gate true, v3-fdj 2 false-pos (miner rejects) | — | — | v2-table needs table scan check |
+| 2.12.3 / 2.13.5 | v2-table true (287-entry RVA run in .vmp1, validated) + v1-gate true | — | — | first v2 frontend hit; v3-fdj candidates don't mine (correct reject) |
+| 2.13.8 ultra | all false (VM packed: 1 file-backed VM section) | — | — | needs trace, not static |
+| 1.54 | v1-gate true (1 gate `.text→.vmp1`, byte-verified) | — | — | Immediate32to64 fix (matcher was dead); target-filtered scan |
 
 3.5.0 is Pushan's exact version: our static miner covers its fetch
 shapes with the same rules as 3.9.6 (their static-region assumption

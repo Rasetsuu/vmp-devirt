@@ -6,7 +6,7 @@
 //! keys (see harness); statically we report table locations.
 use anyhow::Result;
 use crate::frontend::{FetchHit, VmFrontend};
-use crate::pe_loader::PEBinary;
+use crate::pe_loader::{vm_candidate_sections, PEBinary};
 
 /// Scan one section's bytes (starting at `section_va`) for tables.
 pub fn scan_tables_in(data: &[u8], section_va: u64, valid: &dyn Fn(u64) -> bool) -> Vec<u64> {
@@ -65,12 +65,18 @@ fn handler_addrs_inner(binary: &PEBinary) -> Result<Vec<u64>> {
         })
         .map(|s| (pe.image_base + s.rva as u64, s.raw_size as u64))
         .collect();
-    let valid = |v: u64| exec.iter().any(|(b, sz)| *b <= v && v < b + sz);
+    // 2.x tables hold code pointers as VAs on 64-bit builds and RVAs on
+    // 32-bit-era builds; accept either so one rule covers both.
+    let valid = |v: u64| {
+        exec.iter().any(|(b, sz)| *b <= v && v < b + sz)
+            || exec.iter().any(|(b, sz)| {
+                let va = pe.image_base + v;
+                *b <= va && va < b + sz
+            })
+    };
     let mut out = Vec::new();
-    for s in &pe.sections {
-        if !s.name_lossy.to_lowercase().starts_with(".vmp") {
-            continue;
-        }
+    for &i in &vm_candidate_sections(&pe) {
+        let s = &pe.sections[i];
         let sz = s.raw_size as usize;
         if sz == 0 {
             continue;

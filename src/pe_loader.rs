@@ -397,6 +397,34 @@ impl PEBinary {
     }
 }
 
+/// Standard toolchain sections (never VM containers).
+/// Anything else with file backing is a VM-candidate section.
+/// Name matching is exact on the lossy name; `/N` COFF string-table
+/// refs are never standard (VMP hides sections behind them).
+pub fn is_standard_section(name: &str) -> bool {
+    matches!(
+        name,
+        ".text" | ".rdata" | ".buildid" | ".data" | ".pdata" | ".reloc"
+            | ".rsrc" | ".tls" | ".idata" | ".edata" | ".bss"
+    )
+}
+
+/// VM-candidate section indices: non-standard names with raw backing.
+/// Covers `.vmp*` (clean engines) and mutated garbage names (ultra,
+/// 2.x `.???N`) with one content rule instead of a prefix gate.
+pub fn vm_candidate_sections(mpe: &ManualPe) -> Vec<usize> {
+    mpe.sections
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| {
+            s.raw_size > 0
+                && s.raw_ptr > 0
+                && !is_standard_section(&s.name_lossy)
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
