@@ -154,12 +154,51 @@ fn main() -> anyhow::Result<()> {
                 let start = va & !0xfff;
                 (((vsize as u64 + (va - start) + 0xfff) & !0xfff), start)
             };
+            // Gap-filling mapper: overlapping aligned ranges map once;
+            // writes are CHUNKED per mapped page (a single overhanging
+            // write fails whole (flatvirt .text lost 4KB to 0x44 bytes)).
+            let mut done: Vec<(u64, u64)> = Vec::new();
             for (va, off, rawsz, vsize, _n) in &vmp_sections {
                 let (mapped, start) = align_map(*va, *vsize);
-                let _ = emu.mem_map(start, mapped, Prot::ALL);
+                let end = start + mapped;
+                // subtract coverage, map gaps
+                let mut gaps = vec![(start, end)];
+                for d in &done {
+                    let mut next = Vec::new();
+                    for g in gaps {
+                        if g.1 <= d.0 || g.0 >= d.1 {
+                            next.push(g);
+                            continue;
+                        }
+                        if g.0 < d.0 {
+                            next.push((g.0, d.0));
+                        }
+                        if g.1 > d.1 {
+                            next.push((d.1, g.1));
+                        }
+                    }
+                    gaps = next;
+                }
+                for g in gaps {
+                    if emu.mem_map(g.0, g.1 - g.0, Prot::ALL).is_ok() {
+                        done.push((g.0, g.1));
+                    }
+                }
                 if *rawsz > 0 {
-                    let end = (*off + *rawsz).min(bin.data.len());
-                    if *off < end { let _ = emu.mem_write(*va, &bin.data[*off..end]); }
+                    // chunked write: page-granular so partial coverage sticks
+                    let mut cur = *va;
+                    let fend = (*off + *rawsz).min(bin.data.len());
+                    let mut foff = *off;
+                    while foff < fend {
+                        let pg = (cur + 0xfff) & !0xfff;
+                        let n = (pg - cur).min((fend - foff) as u64) as usize;
+                        if n == 0 {
+                            break;
+                        }
+                        let _ = emu.mem_write(cur, &bin.data[foff..foff + n]);
+                        cur += n as u64;
+                        foff += n;
+                    }
                 }
             }
             // RVA alias mapping (ALIAS_RVA=1): some protectors (3.8.1)
