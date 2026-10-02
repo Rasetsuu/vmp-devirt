@@ -24,10 +24,11 @@ fn main() -> Result<()> {
         eprintln!("  devirt synth <chains.json>           # cross-check mined chains by re-synthesis");        eprintln!("  devirt handlers <trace> <memlog> <bin>  # handler blocks via vctx-stores + back-slice");
         eprintln!("  devirt brighten <ll> [--regs <json> --pool <json> --image <bin> --base <hex> --out <ll>]");
         eprintln!("  devirt fetch <trace> <bin> [--memlog <ml>]  # dispatch-anchored fetch discovery");
+        eprintln!("  devirt mba <exprs>                  # MBA simplify + cluster keys (s-expr lines)");
         eprintln!("                                           # Saturn-subset: const-pool fold + stack slots");
         std::process::exit(2);
     }
-    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers", "synth", "brighten", "fetch"].contains(&args[1].as_str()) {
+    let bin = if ["merge", "map", "sense", "dispatch", "mine-live", "mine-hits", "handlers", "synth", "brighten", "fetch", "mba"].contains(&args[1].as_str()) {
         // Merge/sense/dispatch/mine-live/mine-hits/handlers work on raw
         // files, not PEs (handlers takes its binary as args[4]).
         None
@@ -198,10 +199,10 @@ fn main() -> Result<()> {
             println!("indirect dispatch sites: {}", tables.len());
             let mut multi = 0;
             let mut multi_br = 0;
-            for (va, succ) in tables.iter().take(40) {
+            for (va, succ) in tables.iter() {
                 let kind = if indirect.contains(va) { "ind" } else { "br" };
                 println!("  {:#x}: {} targets {} [{}]", va, succ.len(),
-                    succ.iter().take(6).map(|s| format!("{:#x}", s)).collect::<Vec<_>>().join(" | "), kind);
+                    succ.iter().map(|s| format!("{:#x}", s)).collect::<Vec<_>>().join(" | "), kind);
             }
             for (va, succ) in tables.iter() {
                 if succ.len() > 1 {
@@ -748,6 +749,31 @@ fn main() -> Result<()> {
                     None => String::new(),
                 };
                 println!("  {:#x} via {:#x} base={} votes={}{}", c.va, c.via_dispatch, c.base, c.votes, extra);
+            }
+        }
+        other if other == "mba" => {
+            if args.len() < 3 {
+                eprintln!("mba needs <expr-file> (lines: <id> ||| <s-expr>)");
+                std::process::exit(2);
+            }
+            use vmp_devirt::backend::mba::{cluster_key, parse_sexpr, render, simplify};
+            for line in std::fs::read_to_string(&args[2])?.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let (id, sx) = match line.split_once("|||") {
+                    Some((a, b)) => (a.trim().to_string(), b.trim().to_string()),
+                    None => continue,
+                };
+                match parse_sexpr(&sx) {
+                    None => println!("{} ||| PARSE-FAIL", id),
+                    Some(e) => {
+                        let s = simplify(&e);
+                        let k = cluster_key(&s).unwrap_or_else(|| "UNNORMALIZABLE".to_string());
+                        println!("{} ||| {} ||| {}", id, k, render(&s));
+                    }
+                }
             }
         }
         other => {

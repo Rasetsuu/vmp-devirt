@@ -27,7 +27,10 @@
 
 use std::collections::BTreeMap;
 
-/// Expression over named variables (wrapping integer ring).
+/// Opaque operations (shifts, extends): structural, never Table-2
+/// matched. They normalize to [`Atom::Opaque`] keyed by their
+/// normalized operand, so identical shapes cluster without claiming
+/// false linear equivalences.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Const(u64),
@@ -39,6 +42,13 @@ pub enum Expr {
     Or(Box<Expr>, Box<Expr>),
     Xor(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
+    Shl(Box<Expr>, u32),
+    Shru(Box<Expr>, u32),
+    Sx(Box<Expr>, u32),
+    Zx(Box<Expr>, u32),
+    Rol(Box<Expr>, Box<Expr>),
+    Ror(Box<Expr>, Box<Expr>),
+    Mod(Box<Expr>, Box<Expr>),
 }
 
 fn var(s: &str) -> Expr {
@@ -53,6 +63,8 @@ impl Expr {
             Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b)
             | Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => 1 + a.nodes() + b.nodes(),
             Expr::Not(a) => 1 + a.nodes(),
+            Expr::Shl(a, _) | Expr::Shru(a, _) | Expr::Sx(a, _) | Expr::Zx(a, _) => 1 + a.nodes(),
+            Expr::Rol(a, b) | Expr::Ror(a, b) | Expr::Mod(a, b) => 1 + a.nodes() + b.nodes(),
         }
     }
 
@@ -71,6 +83,8 @@ impl Expr {
                 _ => true,
             },
             Expr::Or(..) | Expr::Xor(..) | Expr::Not(_) => true,
+            Expr::Shl(..) | Expr::Shru(..) | Expr::Sx(..) | Expr::Zx(..) => false,
+            Expr::Rol(..) | Expr::Ror(..) | Expr::Mod(..) => false,
         }
     }
 
@@ -86,6 +100,35 @@ impl Expr {
             Expr::Or(a, b) => a.eval(env) | b.eval(env),
             Expr::Xor(a, b) => a.eval(env) ^ b.eval(env),
             Expr::Not(a) => !a.eval(env),
+            Expr::Shl(a, k) => a.eval(env).wrapping_shl(*k),
+            Expr::Shru(a, k) => a.eval(env).wrapping_shr(*k),
+            Expr::Sx(a, n) => {
+                // sign-extend to n BITS (Triton sx(nbits, e) units)
+                let v = a.eval(env) & (if *n >= 64 { u64::MAX } else { (1u64 << n) - 1 });
+                let shift = 64 - (*n).min(64);
+                ((v << shift) as i64 >> shift) as u64
+            }
+            Expr::Rol(a, b) => {
+                let (v, k) = (a.eval(env), b.eval(env) & 63);
+                v.rotate_left(k as u32)
+            }
+            Expr::Ror(a, b) => {
+                let (v, k) = (a.eval(env), b.eval(env) & 63);
+                v.rotate_right(k as u32)
+            }
+            Expr::Mod(a, b) => {
+                let d = b.eval(env);
+                if d == 0 { 0 } else { a.eval(env) % d }
+            }
+            Expr::Zx(a, n) => {
+                // zero-extend to n BITS: low-bits mask
+                let v = a.eval(env);
+                if *n >= 64 {
+                    v
+                } else {
+                    v & ((1u64 << n) - 1)
+                }
+            }
         }
     }
 }
@@ -122,6 +165,13 @@ const ONE: Expr = Expr::Const(1);
 /// `Not` inward first would destroy those rows.
 fn strip_double_neg(e: &Expr) -> Expr {
     match e {
+        Expr::Shl(a, k) => Expr::Shl(re_box(strip_double_neg(a)), *k),
+        Expr::Shru(a, k) => Expr::Shru(re_box(strip_double_neg(a)), *k),
+        Expr::Sx(a, k) => Expr::Sx(re_box(strip_double_neg(a)), *k),
+        Expr::Zx(a, k) => Expr::Zx(re_box(strip_double_neg(a)), *k),
+        Expr::Rol(a, b) => Expr::Rol(re_box(strip_double_neg(a)), re_box(strip_double_neg(b))),
+        Expr::Ror(a, b) => Expr::Ror(re_box(strip_double_neg(a)), re_box(strip_double_neg(b))),
+        Expr::Mod(a, b) => Expr::Mod(re_box(strip_double_neg(a)), re_box(strip_double_neg(b))),
         Expr::Not(x) => match x.as_ref() {
             Expr::Not(y) => strip_double_neg(y),
             _ => Expr::Not(Box::new(strip_double_neg(x))),
@@ -241,6 +291,10 @@ fn table2(op: &str, a: &Expr, b: Option<&Expr>) -> Option<Expr> {
 pub enum Atom {
     Var(String),
     Band(String, String),
+    /// Opaque structural leaf: shifts/extends (and anything outside
+    /// the linear basis), keyed by a canonical string. Never splits
+    /// or combines — identical shapes cluster, nothing false merges.
+    Opaque(String),
 }
 
 /// Signed view of a wrapping coefficient (for pattern matching).
@@ -250,6 +304,27 @@ fn scoeff(v: u64) -> i128 {
     } else {
         v as i128
     }
+}
+
+/// Render a normal form deterministically (shared by Opaque keys
+/// and [`cluster_key`]).
+fn onf_key(nf: &BTreeMap<Vec<Atom>, u64>) -> String {
+    let mut parts: Vec<String> = nf
+        .iter()
+        .map(|(m, c)| {
+            let ms: Vec<String> = m
+                .iter()
+                .map(|x| match x {
+                    Atom::Var(v) => format!("v:{}", v),
+                    Atom::Band(x, y) => format!("b:{},{}", x, y),
+                    Atom::Opaque(k) => format!("o:{}", k),
+                })
+                .collect();
+            format!("[{}]={}", ms.join("*"), c)
+        })
+        .collect();
+    parts.sort();
+    parts.join("+")
 }
 
 /// Linear combination; `None` = not normalizable (residual bitwise
@@ -306,8 +381,32 @@ pub fn normalize(e: &Expr) -> Option<BTreeMap<Vec<Atom>, u64>> {
             }
             Some(m)
         }
-        // Basis atom: And of two variables normalizes to Band (sorted).
-        // Any other bitwise shape must be Table-2 replaced first.
+        Expr::Shl(a, k) | Expr::Shru(a, k) | Expr::Sx(a, k) | Expr::Zx(a, k) => {
+            let tag = match e {
+                Expr::Shl(..) => "shl",
+                Expr::Shru(..) => "shru",
+                Expr::Sx(..) => "sx",
+                _ => "zx",
+            };
+            // Opaque key embeds the NORMALIZED operand: identical
+            // computation shapes share keys, junk-folded inner sums
+            // compare equal. Non-normalizable operand -> whole None.
+            let inner = normalize(a)?;
+            let mut parts: Vec<String> = inner
+                .iter()
+                .map(|(m, c)| format!("{:?}:{}", m, c))
+                .collect();
+            parts.sort();
+            let mut m = BTreeMap::new();
+            m.insert(
+                vec![Atom::Opaque(format!("{}:{}:[{}]", tag, k, parts.join(",")))],
+                1,
+            );
+            Some(m)
+        }
+        // And: variable pairs become Band atoms; anything else
+        // becomes an opaque structural atom (nested combines like
+        // byte-assembly `(a&b)&c` keep their shape for clustering).
         Expr::And(a, b) => match (a.as_ref(), b.as_ref()) {
             (Expr::Var(x), Expr::Var(y)) => {
                 let (l, r) = if x <= y {
@@ -319,8 +418,37 @@ pub fn normalize(e: &Expr) -> Option<BTreeMap<Vec<Atom>, u64>> {
                 m.insert(vec![Atom::Band(l, r)], 1);
                 Some(m)
             }
-            _ => None,
+            _ => {
+                let na = normalize(a)?;
+                let nb = normalize(b)?;
+                let mut m = BTreeMap::new();
+                m.insert(
+                    vec![Atom::Opaque(format!("and:{}:{}", onf_key(&na), onf_key(&nb)))],
+                    1,
+                );
+                Some(m)
+            }
         },
+        // Opaque structural fallback: Or/Xor/Rol/Ror/Mod with
+        // non-Table operands normalize to Opaque atoms keyed by
+        // operator + normalized operand keys. Identical computation
+        // shapes share keys (clustering); nothing combines or splits
+        // (no false equivalences).
+        Expr::Or(a, b) | Expr::Xor(a, b) | Expr::Rol(a, b)
+        | Expr::Ror(a, b) | Expr::Mod(a, b) => {
+            let op = match e {
+                Expr::Or(..) => "or",
+                Expr::Xor(..) => "xor",
+                Expr::Rol(..) => "rol",
+                Expr::Ror(..) => "ror",
+                _ => "mod",
+            };
+            let na = normalize(a)?;
+            let nb = normalize(b)?;
+            let mut m = BTreeMap::new();
+            m.insert(vec![Atom::Opaque(format!("{}:{}:{}", op, onf_key(&na), onf_key(&nb)))], 1);
+            Some(m)
+        }
         // Other bitwise nodes must be Table-2 replaced before normalizing.
         _ => None,
     }
@@ -461,6 +589,13 @@ fn replace_bool(e: &Expr) -> Expr {
         Expr::Or(a, b) => Expr::Or(Box::new(replace_bool(a)), Box::new(replace_bool(b))),
         Expr::Xor(a, b) => Expr::Xor(Box::new(replace_bool(a)), Box::new(replace_bool(b))),
         Expr::Not(a) => Expr::Not(Box::new(replace_bool(a))),
+        Expr::Shl(a, k) => Expr::Shl(Box::new(replace_bool(a)), *k),
+        Expr::Shru(a, k) => Expr::Shru(Box::new(replace_bool(a)), *k),
+        Expr::Sx(a, k) => Expr::Sx(Box::new(replace_bool(a)), *k),
+        Expr::Zx(a, k) => Expr::Zx(Box::new(replace_bool(a)), *k),
+        Expr::Rol(a, b) => Expr::Rol(Box::new(replace_bool(a)), Box::new(replace_bool(b))),
+        Expr::Ror(a, b) => Expr::Ror(Box::new(replace_bool(a)), Box::new(replace_bool(b))),
+        Expr::Mod(a, b) => Expr::Mod(Box::new(replace_bool(a)), Box::new(replace_bool(b))),
         leaf => return leaf.clone(),
     };
     match_node(&rebuilt).unwrap_or(rebuilt)
@@ -475,13 +610,25 @@ pub fn simplify(e: &Expr) -> Expr {
         let lin = replace_bool(&cur);
         let next = match normalize(&lin) {
             Some(nf) => {
-                let back = denormalize(&nf).unwrap_or_else(|| from_normal(&nf));
-                if back.nodes() < cur.nodes() {
-                    back
-                } else if lin.nodes() < cur.nodes() {
-                    lin
+                // from_normal fabricates zeros for Opaque leaves: it is
+                // clustering display only, NEVER a simplification result.
+                let has_opaque = nf.keys().any(|k| {
+                    k.iter().any(|a| matches!(a, Atom::Opaque(_)))
+                });
+                let back = if has_opaque {
+                    None
                 } else {
-                    cur.clone()
+                    Some(denormalize(&nf).unwrap_or_else(|| from_normal(&nf)))
+                };
+                match back {
+                    Some(b) if b.nodes() < cur.nodes() => b,
+                    _ => {
+                        if lin.nodes() < cur.nodes() {
+                            lin
+                        } else {
+                            cur.clone()
+                        }
+                    }
                 }
             }
             None => {
@@ -508,6 +655,11 @@ fn from_normal(nf: &BTreeMap<Vec<Atom>, u64>) -> Expr {
         match a {
             Atom::Var(x) => var(x),
             Atom::Band(x, y) => e_and(var(x), var(y)),
+            // Opaque leaves cannot rebuild (key only); emit 0 so the
+            // sum stays shape-honest without inventing semantics.
+            // NOTE: from_normal output with Opaque is for CLUSTERING,
+            // never for equivalence claims.
+            Atom::Opaque(_) => Expr::Const(0),
         }
     };
     // Deterministic order: consts last (matches paper's -c4 shape).
@@ -588,7 +740,11 @@ pub fn equiv(a: &Expr, b: &Expr) -> Option<bool> {    let mut varset = std::coll
                 walk(x, v);
                 walk(y, v);
             }
-            Expr::Not(x) => walk(x, v),
+            Expr::Not(x) | Expr::Shl(x, _) | Expr::Shru(x, _) | Expr::Sx(x, _) | Expr::Zx(x, _) => walk(x, v),
+            Expr::Rol(x, y) | Expr::Ror(x, y) | Expr::Mod(x, y) => {
+                walk(x, v);
+                walk(y, v);
+            }
             Expr::Const(_) => {}
         }
     }
@@ -639,6 +795,142 @@ pub fn equiv(a: &Expr, b: &Expr) -> Option<bool> {    let mut varset = std::coll
     // Tested-equal (high-confidence, not proof). The exact path above
     // is proof; callers needing proof must ensure inputs normalize.
     Some(true)
+}
+
+/// Canonical clustering key: normalized form rendered
+/// deterministically (consts kept — callers abstract them when they
+/// want family grouping; keys with Opaque leaves group structure).
+pub fn cluster_key(e: &Expr) -> Option<String> {
+    let lin = replace_bool(e);
+    let nf = normalize(&lin)?;
+    let mut parts: Vec<String> = nf
+        .iter()
+        .map(|(m, c)| {
+            let ms: Vec<String> = m
+                .iter()
+                .map(|a| match a {
+                    Atom::Var(x) => format!("v:{}", x),
+                    Atom::Band(x, y) => format!("b:{},{}", x, y),
+                    Atom::Opaque(k) => format!("o:{}", k),
+                })
+                .collect();
+            format!("[{}]={}", ms.join("*"), c)
+        })
+        .collect();
+    parts.sort();
+    Some(parts.join("+"))
+}
+
+/// Parse prefix S-expressions: `(add x 3)`, `(and x y)`, `(not x)`,
+/// `(shl x 8)`, `(shru x 1)`, `(sx x 4)`, bare vars, decimal/0x consts.
+pub fn parse_sexpr(s: &str) -> Option<Expr> {
+    fn tok(s: &str, p: &mut usize) -> Option<String> {
+        let b = s.as_bytes();
+        while *p < b.len() && (b[*p] == b' ' || b[*p] == b'\t' || b[*p] == b'\n') {
+            *p += 1;
+        }
+        if *p >= b.len() {
+            return None;
+        }
+        if b[*p] == b'(' || b[*p] == b')' {
+            let t = (b[*p] as char).to_string();
+            *p += 1;
+            return Some(t);
+        }
+        let st = *p;
+        while *p < b.len() && !b" \t\n()".contains(&b[*p]) {
+            *p += 1;
+        }
+        Some(s[st..*p].to_string())
+    }
+    fn num(t: &str) -> Option<u64> {
+        if let Some(h) = t.strip_prefix("0x") {
+            u64::from_str_radix(h, 16).ok()
+        } else {
+            t.parse::<u64>().ok().or_else(|| t.parse::<i64>().ok().map(|v| v as u64))
+        }
+    }
+    fn expr(s: &str, p: &mut usize) -> Option<Expr> {
+        match tok(s, p)?.as_str() {
+            "(" => {
+                let op = tok(s, p)?;
+                let mut args = Vec::new();
+                loop {
+                    let save = *p;
+                    match tok(s, p) {
+                        Some(t) if t == ")" => break,
+                        Some(_) => {
+                            *p = save;
+                            args.push(expr(s, p)?);
+                        }
+                        None => return None,
+                    }
+                }
+                let mut mkbin = |f: fn(Box<Expr>, Box<Expr>) -> Expr| -> Option<Expr> {
+                    if args.len() == 2 {
+                        let b = args.pop().unwrap();
+                        let a = args.pop().unwrap();
+                        Some(f(Box::new(a), Box::new(b)))
+                    } else {
+                        None
+                    }
+                };
+                match op.as_str() {
+                    "add" => mkbin(Expr::Add),
+                    "sub" => mkbin(Expr::Sub),
+                    "mul" => mkbin(Expr::Mul),
+                    "and" => mkbin(Expr::And),
+                    "or" => mkbin(Expr::Or),
+                    "xor" => mkbin(Expr::Xor),
+                    "not" if args.len() == 1 => {
+                        Some(Expr::Not(Box::new(args.pop().unwrap())))
+                    }
+                    "shl" | "shru" | "sx" | "zx" if args.len() == 2 => {
+                        let a = args.remove(0);
+                        match args.pop().unwrap() {
+                            Expr::Const(k) => {
+                                let f = match op.as_str() {
+                                    "shl" => Expr::Shl as fn(Box<Expr>, u32) -> Expr,
+                                    "shru" => Expr::Shru as fn(Box<Expr>, u32) -> Expr,
+                                    "sx" => Expr::Sx as fn(Box<Expr>, u32) -> Expr,
+                                    _ => Expr::Zx as fn(Box<Expr>, u32) -> Expr,
+                                };
+                                Some(f(Box::new(a), k as u32))
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            ")" => None,
+            t => Some(num(t).map(Expr::Const).unwrap_or_else(|| var(t))),
+        }
+    }
+    let mut p = 0;
+    expr(s, &mut p)
+}
+
+/// Render back to S-expr (inverse of [`parse_sexpr`]).
+pub fn render(e: &Expr) -> String {
+    match e {
+        Expr::Const(v) => format!("{}", v),
+        Expr::Var(x) => x.clone(),
+        Expr::Add(a, b) => format!("(add {} {})", render(a), render(b)),
+        Expr::Sub(a, b) => format!("(sub {} {})", render(a), render(b)),
+        Expr::Mul(a, b) => format!("(mul {} {})", render(a), render(b)),
+        Expr::And(a, b) => format!("(and {} {})", render(a), render(b)),
+        Expr::Or(a, b) => format!("(or {} {})", render(a), render(b)),
+        Expr::Xor(a, b) => format!("(xor {} {})", render(a), render(b)),
+        Expr::Not(a) => format!("(not {})", render(a)),
+        Expr::Shl(a, k) => format!("(shl {} {})", render(a), k),
+        Expr::Shru(a, k) => format!("(shru {} {})", render(a), k),
+        Expr::Sx(a, k) => format!("(sx {} {})", render(a), k),
+        Expr::Zx(a, k) => format!("(zx {} {})", render(a), k),
+        Expr::Rol(a, b) => format!("(rol {} {})", render(a), render(b)),
+        Expr::Ror(a, b) => format!("(ror {} {})", render(a), render(b)),
+        Expr::Mod(a, b) => format!("(mod {} {})", render(a), render(b)),
+    }
 }
 
 #[cfg(test)]
@@ -762,5 +1054,17 @@ mod tests {
         // Rotates are outside the linear basis: honest None, not garbage.
         assert!(from_chain(&[("Ror".to_string(), 1)]).is_none());
         assert!(from_chain(&[("And".to_string(), 0xFF)]).is_none());
+    }
+
+    #[test]
+    fn sexpr_roundtrip_and_key() {
+        let e = parse_sexpr("(add x (mul 2 (and x y)))").unwrap();
+        assert_eq!(render(&e), "(add x (mul 2 (and x y)))");
+        // x + 2(x&y): normalizes, key stable across renames is caller's job
+        let k = cluster_key(&e).unwrap();
+        assert!(k.contains("v:x") && k.contains("b:x,y"));
+        // junk folds: (add x 0) keys like x
+        let j = parse_sexpr("(add x 0)").unwrap();
+        assert_eq!(cluster_key(&j).unwrap(), cluster_key(&var("x")).unwrap());
     }
 }
