@@ -55,7 +55,14 @@ fn main() -> anyhow::Result<()> {
             if let Ok(b) = bin.read_bytes(*va, 8) {
                 let mut d = Decoder::with_ip(64, &b, *va, DecoderOptions::NONE);
                 let ins = d.decode();
-                if ins.mnemonic() == Mnemonic::Movzx {
+                // Any byte-load feeds the watch map, not just movzx:
+                // the sensor proposes shapes, the tracer must not
+                // re-narrow them (architectural seam fix).
+                let is_byte_load = matches!(
+                    ins.mnemonic(),
+                    Mnemonic::Movzx | Mnemonic::Movsx | Mnemonic::Mov
+                ) && ins.memory_base() != IR::None;
+                if is_byte_load {
                     let xr = match ins.memory_base() {
                         IR::RAX => RegisterX86::RAX, IR::RBX => RegisterX86::RBX,
                         IR::RCX => RegisterX86::RCX, IR::RDX => RegisterX86::RDX,

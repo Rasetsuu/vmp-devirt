@@ -101,6 +101,9 @@ if maybe(hp):
     check("tig_switch.hits", len(h) == G["tigress"]["switch"]["fetch_hits"], "hits=%d" % len(h))
 
 print("fails=%d skips=%d checked=%d" % (len(fails), len(skips), len(ran)))
+if "--strict" in sys.argv and skips:
+    print("STRICT: %d expected samples missing" % len(skips))
+    sys.exit(2)
 if not ran:
     print("0 CHECKED - nothing ran (all samples missing); green means nothing, not health")
 sys.exit(1 if fails else 0)

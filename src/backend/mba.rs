@@ -539,6 +539,29 @@ fn from_normal(nf: &BTreeMap<Vec<Atom>, u64>) -> Expr {
     acc.unwrap_or(Expr::Const(0))
 }
 
+/// Proof-grade result: `Proven`/`Refuted` come from exact normal
+/// forms; `TestedOnly` from deterministic input testing; `Unknown`
+/// from internal guards. Callers must never present `TestedOnly` as
+/// proof — the type makes the confusion a compile-time decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofResult {
+    Proven,
+    Refuted,
+    TestedOnly(bool),
+    Unknown,
+}
+
+/// Unified check: exact path first, tested path labeled as such.
+pub fn check(a: &Expr, b: &Expr) -> ProofResult {
+    if let Some(exact) = equiv_exact(a, b) {
+        return if exact { ProofResult::Proven } else { ProofResult::Refuted };
+    }
+    match equiv(a, b) {
+        Some(v) => ProofResult::TestedOnly(v),
+        None => ProofResult::Unknown,
+    }
+}
+
 /// Exact-only equivalence: `Some(true/false)` when the difference
 /// normalizes after Table-2 replacement, `None` when it does not
 /// (residual bitwise — caller must fall back to testing, never claim).

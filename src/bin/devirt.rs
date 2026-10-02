@@ -513,7 +513,9 @@ fn main() -> Result<()> {
                 // the mined chain and its rule-canonical form to Exprs;
                 // equiv() PROVES (exact path) rather than pair-tests.
                 {
-                    use vmp_devirt::backend::mba::{equiv_exact, from_chain, simplify as mba_simplify};
+                    use vmp_devirt::backend::mba::{
+                        check as mba_check, from_chain, simplify as mba_simplify, ProofResult,
+                    };
                     let opname = |o: CryptOp| match o {
                         CryptOp::Xor => "Xor", CryptOp::Add => "Add", CryptOp::Sub => "Sub",
                         CryptOp::Rol => "Rol", CryptOp::Ror => "Ror", CryptOp::Inc => "Inc",
@@ -527,13 +529,13 @@ fn main() -> Result<()> {
                         from_chain(&to_pairs(&base)),
                         from_chain(&to_pairs(&cvec)),
                     ) {
-                        match equiv_exact(&orig, &cano) {
-                            Some(true) => {
+                        match mba_check(&orig, &cano) {
+                            ProofResult::Proven => {
                                 let s = mba_simplify(&orig);
                                 eprintln!("  {} mba-proved (nodes {} -> {})", site, orig.nodes(), s.nodes());
                             }
-                            Some(false) => disagree.push(site.clone() + " (mba-inequivalent)"),
-                            None => {}
+                            ProofResult::Refuted => disagree.push(site.clone() + " (mba-inequivalent)"),
+                            ProofResult::TestedOnly(_) | ProofResult::Unknown => {}
                         }
                     }
                 }
