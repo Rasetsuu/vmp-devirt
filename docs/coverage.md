@@ -225,6 +225,19 @@ All compute `done e38e3794`. Pipeline run unchanged:
 | 3.9.6 | 440 | 23 | 21/0 | movzx 21/21 |
 | 3.9.6 costum | 1311 | 11 | 9/0 | same alphabet |
 
+## Older versions (same source, collection engines, zero new rules)
+
+| Build | Scan | Mine | Synth | Fetch @ mined |
+|---|---|---|---|---|
+| 3.3.1 licensed | 16 | 10/40 (9 chains) | 7/0 | movzx/movsx |
+| 3.5.0 | 16 | 9/40 (8 chains) | 8/0 | movzx 8/8 |
+| 2.0.5 demo | 0 | 0 (v2 table dispatch — v3 scanner N/A) | — | — (v2 frontend parked, sample in hand) |
+
+3.5.0 is Pushan's exact version: our static miner covers its fetch
+shapes with the same rules as 3.9.6 (their static-region assumption
+is what differs, not the cryptors). 2.0.5 needs the table frontend;
+its sections prove protection took (`.vmp0`, `/4`, `/18`).
+
 Higher complexity multiplies code surface (3x sites), not crypto:
 same key regs, same step shapes, synth 9/9. Mine-rate dip is sample
 composition (first-40 lands in junk regions), not harder chains.
