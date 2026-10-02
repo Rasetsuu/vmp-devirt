@@ -185,12 +185,15 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 if *rawsz > 0 {
-                    // chunked write: page-granular so partial coverage sticks
+                    // chunked write: page-granular so partial coverage sticks.
+                    // (pg must ADVANCE past cur: (cur+0xfff)&~0xfff stalls
+                    // when cur is already aligned — flatvirt lost 0x84 bytes
+                    // of .text to exactly this.)
                     let mut cur = *va;
                     let fend = (*off + *rawsz).min(bin.data.len());
                     let mut foff = *off;
                     while foff < fend {
-                        let pg = (cur + 0xfff) & !0xfff;
+                        let pg = (cur | 0xfff) + 1;
                         let n = (pg - cur).min((fend - foff) as u64) as usize;
                         if n == 0 {
                             break;
