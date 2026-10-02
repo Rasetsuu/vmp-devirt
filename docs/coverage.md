@@ -231,6 +231,8 @@ All compute `done e38e3794`. Pipeline run unchanged:
 |---|---|---|---|---|
 | 3.3.1 licensed | 16 | 10/40 (9 chains) | 7/0 | movzx/movsx |
 | 3.5.0 | 16 | 9/40 (8 chains) | 8/0 | movzx 8/8 |
+| 3.9.6 ultra (mut+virt+antidbg max) | 352 | 24/40 | 24/0/0 | movzx 24/24 |
+| 3.2.0 ultra (same max) | 0 | 0/40 | — | no sites (mutation hides fetch) |
 | 2.0.5 demo | 0 | 0 (v2 table dispatch — v3 scanner N/A) | — | — (v2 frontend parked, sample in hand) |
 
 3.5.0 is Pushan's exact version: our static miner covers its fetch
