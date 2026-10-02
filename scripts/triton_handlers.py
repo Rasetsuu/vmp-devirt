@@ -47,12 +47,47 @@ def rmem(va, n):
     return None
 
 
+
+try:
+    from triton import CALLBACK as _CB
+except Exception:
+    _CB = None
+
+
+def arm_snapshot_callback(ctx):
+    """Feed snapshot bytes on concrete reads WITHOUT clobbering
+    symbolic memory (the post-load setConcrete pattern overwrote
+    VM-written symbolic cells with stale dump bytes and fed
+    uninitialized zeros on first touch — both wrong)."""
+    if _CB is None:
+        return
+
+    def cb(c, ma):
+        try:
+            if c.isMemorySymbolized(ma):
+                return
+            a = ma.getAddress()
+            b = rmem(a, 8)
+            if b is None:
+                return
+            w = {1: CPUSIZE.BYTE, 2: CPUSIZE.WORD, 4: CPUSIZE.DWORD, 8: CPUSIZE.QWORD}.get(ma.getSize(), CPUSIZE.QWORD)
+            c.setConcreteMemoryValue(MemoryAccess(ma.getAddress(), w),
+                                     int.from_bytes(b[:ma.getSize()], "little"))
+        except Exception:
+            pass
+
+    try:
+        ctx.addCallback(_CB.GET_CONCRETE_MEMORY_VALUE, cb)
+    except Exception:
+        pass
+
 def lift_block(va, max_ins=24, sym_regs=("rsi", "rdi", "r9", "rcx")):
     """Return {reg: simplified AST str} for touched output regs."""
     ctx = TritonContext(ARCH.X86_64)
     ctx.setAstRepresentationMode(AST_REPRESENTATION.PYTHON)
     for r in sym_regs:
         ctx.symbolizeRegister(getattr(ctx.registers, r))
+    arm_snapshot_callback(ctx)
     code = rmem(va, 96)
     if not code:
         return None
@@ -64,15 +99,7 @@ def lift_block(va, max_ins=24, sym_regs=("rsi", "rdi", "r9", "rcx")):
         i = Instruction(bytes(ins.bytes))
         i.setAddress(ins.address)
         ctx.processing(i)
-        for le in i.getLoadAccess():
-            ma = le[0] if isinstance(le, tuple) else le
-            a, s = ma.getAddress(), ma.getSize()
-            b = rmem(a, s)
-            if b is not None:
-                width = {1: CPUSIZE.BYTE, 2: CPUSIZE.WORD,
-                         4: CPUSIZE.DWORD, 8: CPUSIZE.QWORD}.get(s, CPUSIZE.QWORD)
-                ctx.setConcreteMemoryValue(
-                    MemoryAccess(a, width), int.from_bytes(b[:s], "little"))
+        pass  # concrete memory via arm_snapshot_callback
         if ins.mnemonic in ("jmp", "call", "ret"):
             break
     out = {}
