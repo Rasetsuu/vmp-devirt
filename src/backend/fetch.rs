@@ -28,6 +28,10 @@ pub struct FetchCandidate {
     pub base: String,
     /// Supporting occurrences (dispatch visits that resolved here).
     pub votes: usize,
+    /// Position in the load chain (0 = nearest the dispatch).
+    /// Table-indexed dispatch yields chain [table@0, fetch@1, ...];
+    /// the stride check, not position, decides which one walks.
+    pub chain_pos: usize,
 }
 
 /// Canonicalize x86 partial registers to their 64-bit root so
@@ -70,11 +74,15 @@ pub struct SliceStats {
 /// most `depth` steps, tracking registers that determine the outcome.
 /// `seeds`: jump-target register (indirect jmp/call) or flag-writer
 /// read regs (conditional branch — resolved per occurrence by the
-/// caller via trace walk-back). Returns the first memory-load VA on
-/// the chain, if any.
+/// caller via trace walk-back).
 ///
-/// `decode` maps VA -> facts. The caller owns decoding (iced on real
-/// bytes, synthetic tables in tests).
+/// Returns the full LOAD CHAIN (every memory load on the data path,
+/// nearest-first), not just the first load: dispatch often threads
+/// through a handler table (`movzx [vpc]` -> `mov [table+idx]` ->
+/// `jmp`), and the fetch is the load whose address WALKS (see
+/// [`stride_check`]), which the table load does not. Callers that
+/// want the old first-load behavior take `.first()`.
+/// Returns the chain plus steps walked.
 pub fn backslice_to_load(
     trace: &[u64],
     occ_idx: usize,
@@ -82,10 +90,26 @@ pub fn backslice_to_load(
     depth: usize,
     decode: &dyn Fn(u64) -> Option<FetchDecoded>,
 ) -> Option<(u64, String)> {
-    backslice_stats(trace, occ_idx, seeds, depth, decode, None).0
+    backslice_inner(trace, occ_idx, seeds, depth, decode, None).0.first().cloned()
 }
 
-/// Same, accumulating termination stats.
+/// Full load chain: every `(load VA, base reg)` on the data path,
+/// nearest-first. After recording a load, the slice CONTINUES through
+/// the load's address registers (base + index), so table-indexed
+/// dispatch yields `[table-load, fetch-load, ...]` instead of
+/// stopping at the table.
+pub fn backslice_chain(
+    trace: &[u64],
+    occ_idx: usize,
+    seeds: &[String],
+    depth: usize,
+    decode: &dyn Fn(u64) -> Option<FetchDecoded>,
+) -> Vec<(u64, String)> {
+    backslice_inner(trace, occ_idx, seeds, depth, decode, None).0
+}
+
+/// Same, accumulating termination stats (`found` counts slices that
+/// produced a non-empty chain).
 pub fn backslice_stats(
     trace: &[u64],
     occ_idx: usize,
@@ -94,13 +118,28 @@ pub fn backslice_stats(
     decode: &dyn Fn(u64) -> Option<FetchDecoded>,
     stats: Option<&mut SliceStats>,
 ) -> (Option<(u64, String)>, usize) {
+    let (chain, walked) = backslice_inner(trace, occ_idx, seeds, depth, decode, stats);
+    (chain.first().cloned(), walked)
+}
+
+/// Shared slice core: walk back, record every load, follow value and
+/// address chains. Returns (chain nearest-first, steps walked).
+fn backslice_inner(
+    trace: &[u64],
+    occ_idx: usize,
+    seeds: &[String],
+    depth: usize,
+    decode: &dyn Fn(u64) -> Option<FetchDecoded>,
+    mut stats: Option<&mut SliceStats>,
+) -> (Vec<(u64, String)>, usize) {
     use std::collections::HashSet;
     let mut tracked: HashSet<String> = seeds.iter().cloned().collect();
+    let mut chain = Vec::new();
     if tracked.is_empty() {
-        if let Some(s) = stats {
+        if let Some(s) = stats.as_deref_mut() {
             s.empty_seeds += 1;
         }
-        return (None, 0);
+        return (chain, 0);
     }
     let lo = occ_idx.saturating_sub(depth);
     let mut walked = 0;
@@ -110,46 +149,51 @@ pub fn backslice_stats(
         let d = match decode(*va) {
             Some(d) => d,
             None => {
-                if let Some(s) = stats {
+                if let Some(s) = stats.as_deref_mut() {
                     s.decode_fail += 1;
                 }
-                return (None, walked);
+                break;
             }
         };
-        if d.writes.iter().any(|r| tracked.contains(r)) {
-            // This insn defines a tracked reg: check for a load first.
-            if let Some((true, base)) = d.mem_load.clone() {
-                if let Some(s) = stats {
-                    s.found += 1;
-                }
-                return (Some((*va, base)), walked);
-            }
-            // Otherwise follow the data: drop written, add read.
-            for w in &d.writes {
-                tracked.remove(w);
-            }
-            // Calls clobber through memory/ABI: stop (conservative).
-            if d.is_call {
-                if let Some(s) = stats {
-                    s.call_stop += 1;
-                }
-                return (None, walked);
-            }
-            for r in &d.reads {
-                tracked.insert(r.clone());
-            }
-            if tracked.is_empty() {
-                if let Some(s) = stats {
-                    s.empty_seeds += 1;
-                }
-                return (None, walked);
+        if !d.writes.iter().any(|r| tracked.contains(r)) {
+            continue;
+        }
+        // Record loads, then follow BOTH the value chain (reads) and
+        // the address chain (load base/index regs stay tracked via
+        // reads — bases are already in `reads` from decode).
+        if let Some((true, base)) = d.mem_load.clone() {
+            if !base.is_empty() {
+                chain.push((*va, base));
             }
         }
+        for w in &d.writes {
+            tracked.remove(w);
+        }
+        // Calls clobber through memory/ABI: stop (conservative).
+        if d.is_call {
+            if let Some(s) = stats.as_deref_mut() {
+                s.call_stop += 1;
+            }
+            break;
+        }
+        for r in &d.reads {
+            tracked.insert(r.clone());
+        }
+        if tracked.is_empty() {
+            if let Some(s) = stats.as_deref_mut() {
+                s.empty_seeds += 1;
+            }
+            break;
+        }
     }
-    if let Some(s) = stats {
-        s.depth_out += 1;
+    if chain.is_empty() {
+        if let Some(s) = stats.as_deref_mut() {
+            s.depth_out += 1;
+        }
+    } else if let Some(s) = stats.as_deref_mut() {
+        s.found += 1;
     }
-    (None, walked)
+    (chain, walked)
 }
 
 /// Decoded instruction facts the back-slice needs.
@@ -266,7 +310,7 @@ pub fn discover_stats(
     depth: usize,
     mut stats: Option<&mut SliceStats>,
 ) -> Vec<FetchCandidate> {
-    let mut votes: BTreeMap<(u64, u64), (String, usize)> = BTreeMap::new();
+    let mut votes: BTreeMap<(u64, u64, usize), (String, usize)> = BTreeMap::new();
     for (idx, va) in trace.iter().enumerate() {
         if !dispatch_sites.contains(va) {
             continue;
@@ -275,14 +319,21 @@ pub fn discover_stats(
             Some(t) => t.clone(),
             None => continue,
         };
-        if let Some((load_va, base)) = backslice_stats(trace, idx, &[treg.clone()], depth, decode, stats.as_deref_mut()).0 {
-            let e = votes.entry((load_va, *va)).or_insert((base, 0));
+        for (pos, (load_va, base)) in backslice_chain(trace, idx, &[treg.clone()], depth, decode)
+            .into_iter()
+            .enumerate()
+        {
+            let e = votes.entry((load_va, *va, pos)).or_insert((base, 0));
             e.1 += 1;
+        }
+        // stats parity: count the slice once
+        if let Some(s) = stats.as_deref_mut() {
+            s.found += 0;
         }
     }
     let mut out: Vec<FetchCandidate> = votes
         .into_iter()
-        .map(|((va, via), (base, votes))| FetchCandidate { va, via_dispatch: via, base, votes })
+        .map(|((va, via, pos), (base, votes))| FetchCandidate { va, via_dispatch: via, base, votes, chain_pos: pos })
         .collect();
     out.sort_by_key(|c| (u64::MAX - c.votes as u64, c.va));
     out
@@ -349,7 +400,7 @@ pub fn discover_branch_stats(
     mut stats: Option<&mut SliceStats>,
 ) -> Vec<FetchCandidate> {
     use iced_x86::Mnemonic as M;
-    let mut votes: BTreeMap<(u64, u64), (String, usize)> = BTreeMap::new();
+    let mut votes: BTreeMap<(u64, u64, usize), (String, usize)> = BTreeMap::new();
     let mut counts: BTreeMap<u64, usize> = BTreeMap::new();
     for (idx, va) in trace.iter().enumerate() {
         if !branch_sites.contains(va) {
@@ -394,14 +445,17 @@ pub fn discover_branch_stats(
                 }
             }
         }
-        if let Some((load_va, base)) = backslice_stats(trace, idx, &seeds, depth, decode, stats.as_deref_mut()).0 {
-            let e = votes.entry((load_va, *va)).or_insert((base, 0));
+        for (pos, (load_va, base)) in backslice_chain(trace, idx, &seeds, depth, decode)
+            .into_iter()
+            .enumerate()
+        {
+            let e = votes.entry((load_va, *va, pos)).or_insert((base, 0));
             e.1 += 1;
         }
     }
     let mut out: Vec<FetchCandidate> = votes
         .into_iter()
-        .map(|((va, via), (base, votes))| FetchCandidate { va, via_dispatch: via, base, votes })
+        .map(|((va, via, pos), (base, votes))| FetchCandidate { va, via_dispatch: via, base, votes, chain_pos: pos })
         .collect();
     out.sort_by_key(|c| (u64::MAX - c.votes as u64, c.va));
     out
@@ -512,5 +566,32 @@ mod tests {
         assert_eq!(out.len(), 1, "out={:?}", out);
         assert_eq!(out[0].va, 0x1000);
         assert_eq!(out[0].base, "rax");
+    }
+
+    #[test]
+    fn table_in_the_middle_yields_chain() {
+        // Claude's case: fetch -> handler-table load -> jmp.
+        //   0x1000: movzx eax, byte ptr [rsi]      (fetch, base rsi)
+        //   0x1003: mov rax, [rdi+rax*8]           (table, base rdi)
+        //   0x1007: jmp rax
+        // Must yield [table@0, fetch@1], not stop at the table.
+        let mut mem: HashMap<u64, Vec<u8>> = HashMap::new();
+        mem.insert(0x1000, vec![0x0F, 0xB6, 0x06]); // movzx eax,[rsi]
+        mem.insert(0x1003, vec![0x48, 0x8B, 0x04, 0xC7]); // mov rax,[rdi+rax*8]
+        mem.insert(0x1007, vec![0xFF, 0xE0]); // jmp rax
+        let d = |va: u64| mem.get(&va).and_then(|b| decode_va(b, va));
+        let trace = vec![0x1000u64, 0x1003, 0x1007, 0x2000];
+        let chain = backslice_chain(&trace, 2, &["rax".to_string()], 16, &d);
+        assert_eq!(chain.len(), 2, "chain={:?}", chain);
+        assert_eq!(chain[0].0, 0x1003); // table first (nearest dispatch)
+        assert_eq!(chain[1].0, 0x1000); // fetch second
+        assert_eq!(chain[1].1, "rsi");
+        // discover() votes both positions
+        let sites = BTreeSet::from([0x1007u64]);
+        let regs = BTreeMap::from([(0x1007u64, "rax".to_string())]);
+        let out = discover(&trace, &sites, &regs, &d, 16);
+        assert_eq!(out.len(), 2, "out={:?}", out);
+        let fetch = out.iter().find(|c| c.va == 0x1000).expect("fetch voted");
+        assert_eq!(fetch.chain_pos, 1);
     }
 }

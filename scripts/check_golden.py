@@ -19,7 +19,7 @@ TIG_WORK = os.environ.get("TIG_WORK", HOME + "/RE/tigress/work")
 DEVIRT = os.environ.get("DEVIRT", REPO + "/target/debug/devirt")
 
 G = json.load(open(REPO + "/tests/golden.json"))
-fails, skips = [], []
+fails, skips, ran = [], [], []
 
 
 def run(args, timeout=600):
@@ -28,6 +28,7 @@ def run(args, timeout=600):
 
 
 def check(name, cond, detail=""):
+    ran.append(name)
     print(("PASS " if cond else "FAIL ") + name + (" " + detail if detail else ""))
     if not cond:
         fails.append(name)
@@ -99,5 +100,7 @@ if maybe(hp):
     h = json.load(open(hp))
     check("tig_switch.hits", len(h) == G["tigress"]["switch"]["fetch_hits"], "hits=%d" % len(h))
 
-print("fails=%d skips=%d" % (len(fails), len(skips)))
+print("fails=%d skips=%d checked=%d" % (len(fails), len(skips), len(ran)))
+if not ran:
+    print("0 CHECKED - nothing ran (all samples missing); green means nothing, not health")
 sys.exit(1 if fails else 0)

@@ -115,7 +115,28 @@ link check runs as a non-blocking CI job (needs LLVM 22).
 5. Lift reached handlers via Remill, `opt -O3`, emit cards/dataflow,
    recompile with `llc` (`ld -r` proves composability).
 
+## Related work (what's borrowed, what's different)
+
+- **VTIL** (Can Bölük, BSD-3): table-driven simplifier rules ported
+  as a linear subset into `synth` (`simplify_chain`, attributed
+  in-code). We kept Remill+LLVM as the lifter; no IR swap.
+- **Pushan** (trace-free VM deobfuscation, validated on 3.5.0): our
+  live-capture architecture answers the SMC their static regions
+  assume away. Borrowed: VPC-identification thinking, S2/S3-style
+  simplification passes.
+- **SATURN** (Remill+LLVM+Souper pipeline): our backend follows the
+  same shape; ported the constant-pool and stack-brightening ideas
+  as `devirt brighten` (pool doesn't fire on 3.9 — documented).
+- **MBA-Blast** (Liu et al., USENIX '21): Table-2 + Algorithm-1
+  ported as `backend/mba.rs` (paper-derived, no vendored code).
+- **Tigress** (Collberg, Arizona): second target family, not a
+  dependency. Academic/free, our cross-protector control group.
+
 ## License
 
 MIT (see LICENSE) with dependency notes (notably Unicorn GPL-2.0).
 Research/educational use only, on binaries you own or may analyze.
+
+Built with AI assistance (design, code, docs — human-directed,
+machine-checked: every number in `docs/coverage.md` reproduces
+from the commands beside it).

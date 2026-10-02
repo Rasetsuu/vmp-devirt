@@ -94,6 +94,17 @@ pub fn mine_cryptor_with(
                 && ins.memory_base() != iced_x86::Register::None
             {
                 start_va = ins.ip();
+                if start_va != site.va {
+                    // Entry tolerance fired: prologue before fetch.
+                    // Logged (stderr) so misattribution is auditable;
+                    // chain_verify judges consistency downstream.
+                    eprintln!(
+                        "miner entry+{:#x} at {:#x} (fetch {:#x})",
+                        start_va - site.va,
+                        site.va,
+                        start_va
+                    );
+                }
                 break;
             }
             // Stop at flow changes: the fetch belongs to straight-line prologue.
