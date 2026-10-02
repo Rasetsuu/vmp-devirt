@@ -47,20 +47,18 @@ impl VmFrontend for V1Gate {
         "vmp1-gate"
     }
     fn detect(&self, binary: &PEBinary) -> Result<bool> {
-        let pe = binary.parse_pe()?;
-        let base = binary.image_base()?;
+        let pe = binary.parse_manual()?;
         for s in &pe.sections {
-            let name = std::str::from_utf8(&s.name).unwrap_or("").trim_end_matches('\0');
-            if !name.to_lowercase().starts_with(".vmp") {
+            if !s.name_lossy.to_lowercase().starts_with(".vmp") {
                 continue;
             }
-            let sz = s.size_of_raw_data as usize;
+            let sz = s.raw_size as usize;
             if sz == 0 {
                 continue;
             }
-            let off = s.pointer_to_raw_data as usize;
+            let off = s.raw_ptr as usize;
             let end = off.saturating_add(sz).min(binary.data.len());
-            if off < end && !scan_gates(&binary.data[off..end], base + s.virtual_address as u64).is_empty() {
+            if off < end && !scan_gates(&binary.data[off..end], pe.image_base + s.rva as u64).is_empty() {
                 return Ok(true);
             }
         }
@@ -71,22 +69,20 @@ impl VmFrontend for V1Gate {
         Ok(Vec::new())
     }
     fn handler_addrs(&self, binary: &PEBinary, _hits: &[FetchHit]) -> Result<Vec<u64>> {
-        let pe = binary.parse_pe()?;
-        let base = binary.image_base()?;
+        let pe = binary.parse_manual()?;
         let mut out = Vec::new();
         for s in &pe.sections {
-            let name = std::str::from_utf8(&s.name).unwrap_or("").trim_end_matches('\0');
-            if !name.to_lowercase().starts_with(".vmp") {
+            if !s.name_lossy.to_lowercase().starts_with(".vmp") {
                 continue;
             }
-            let sz = s.size_of_raw_data as usize;
+            let sz = s.raw_size as usize;
             if sz == 0 {
                 continue;
             }
-            let off = s.pointer_to_raw_data as usize;
+            let off = s.raw_ptr as usize;
             let end = off.saturating_add(sz).min(binary.data.len());
             if off < end {
-                out.extend(scan_gates(&binary.data[off..end], base + s.virtual_address as u64));
+                out.extend(scan_gates(&binary.data[off..end], pe.image_base + s.rva as u64));
             }
         }
         Ok(out)

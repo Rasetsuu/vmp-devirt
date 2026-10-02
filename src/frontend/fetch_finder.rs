@@ -175,21 +175,18 @@ mod tests {
             Err(_) => return, // skip in CI without binary
         };
         let vmp_data = bin.get_section(".vmp00").or_else(|_| {
-            // Fallback: VMP section has garbage name in 3.9.4, so grab largest non-standard
-            let pe = bin.parse_pe().unwrap();
-            let base = bin.image_base().unwrap();
+            // Fallback: VMP section has garbage name in 3.9.4+, so grab largest non-standard
+            let pe = bin.parse_manual().unwrap();
             let mut best: Option<Vec<u8>> = None;
             let mut best_size = 0usize;
             for s in &pe.sections {
-                let name = std::str::from_utf8(&s.name).unwrap_or("").trim_end_matches('\0');
-                if [".text",".rdata",".data",".pdata",".reloc",".rsrc"].contains(&name) { continue; }
-                let sz = s.size_of_raw_data as usize;
+                if [".text",".rdata",".data",".pdata",".reloc",".rsrc",".buildid"].contains(&s.name_lossy.as_str()) { continue; }
+                let sz = s.raw_size as usize;
                 if sz > best_size {
                     best_size = sz;
-                    let off = s.pointer_to_raw_data as usize;
+                    let off = s.raw_ptr as usize;
                     best = Some(bin.data[off..off+sz].to_vec());
                 }
-                let _ = base;
             }
             best.ok_or(anyhow::anyhow!("no vmp")) 
         });

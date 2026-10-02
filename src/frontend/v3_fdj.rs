@@ -7,24 +7,22 @@ use crate::pe_loader::PEBinary;
 pub struct V3Fdj;
 
 fn vmp_section_data<'a>(binary: &'a PEBinary) -> Result<(Vec<u8>, u64)> {
-    let pe = binary.parse_pe()?;
-    let base = binary.image_base()?;
+    let pe = binary.parse_manual()?;
     let mut best: Option<(Vec<u8>, u64)> = None;
     for s in &pe.sections {
-        let name = std::str::from_utf8(&s.name).unwrap_or("").trim_end_matches('\0');
-        if [".text", ".rdata", ".data", ".pdata", ".reloc", ".rsrc"].contains(&name) {
+        if [".text", ".rdata", ".data", ".pdata", ".reloc", ".rsrc", ".buildid"].contains(&s.name_lossy.as_str()) {
             continue;
         }
-        let sz = s.size_of_raw_data as usize;
+        let sz = s.raw_size as usize;
         if sz == 0 {
             continue;
         }
-        let off = s.pointer_to_raw_data as usize;
+        let off = s.raw_ptr as usize;
         let end = off.saturating_add(sz).min(binary.data.len());
         if off >= end {
             continue;
         }
-        let cand = (binary.data[off..end].to_vec(), base + s.virtual_address as u64);
+        let cand = (binary.data[off..end].to_vec(), pe.image_base + s.rva as u64);
         if best.as_ref().map(|(d, _)| d.len()).unwrap_or(0) < cand.0.len() {
             best = Some(cand);
         }

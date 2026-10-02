@@ -55,32 +55,30 @@ impl VmFrontend for V2Table {
 }
 
 fn handler_addrs_inner(binary: &PEBinary) -> Result<Vec<u64>> {
-    let pe = binary.parse_pe()?;
-    let base = binary.image_base()?;
+    let pe = binary.parse_manual()?;
     let exec: Vec<(u64, u64)> = pe
         .sections
         .iter()
         .filter(|s| {
-            s.size_of_raw_data > 0
-                && s.characteristics & 0x20000000 != 0 // IMAGE_SCN_MEM_EXECUTE
+            s.raw_size > 0
+                && s.chars & 0x20000000 != 0 // IMAGE_SCN_MEM_EXECUTE
         })
-        .map(|s| (base + s.virtual_address as u64, s.size_of_raw_data as u64))
+        .map(|s| (pe.image_base + s.rva as u64, s.raw_size as u64))
         .collect();
     let valid = |v: u64| exec.iter().any(|(b, sz)| *b <= v && v < b + sz);
     let mut out = Vec::new();
     for s in &pe.sections {
-        let name = std::str::from_utf8(&s.name).unwrap_or("").trim_end_matches('\0');
-        if !name.to_lowercase().starts_with(".vmp") {
+        if !s.name_lossy.to_lowercase().starts_with(".vmp") {
             continue;
         }
-        let sz = s.size_of_raw_data as usize;
+        let sz = s.raw_size as usize;
         if sz == 0 {
             continue;
         }
-        let off = s.pointer_to_raw_data as usize;
+        let off = s.raw_ptr as usize;
         let end = off.saturating_add(sz).min(binary.data.len());
         if off < end {
-            out.extend(scan_tables_in(&binary.data[off..end], base + s.virtual_address as u64, &valid));
+            out.extend(scan_tables_in(&binary.data[off..end], pe.image_base + s.rva as u64, &valid));
         }
     }
     Ok(out)
