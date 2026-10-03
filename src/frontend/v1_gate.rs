@@ -36,11 +36,21 @@ pub fn scan_gates(data: &[u8], image_base: u64) -> Vec<u64> {
 /// to the unfiltered shape (legacy behavior) so plain-pattern callers
 /// still get candidates.
 pub fn scan_gates_into_vm(data: &[u8], image_base: u64, vm: &[(u64, u64)]) -> Vec<u64> {
+    scan_gates_into_vm_bits(data, image_base, vm, true)
+}
+
+/// Bitness-aware gate scan. 32-bit binaries must decode as 32-bit:
+/// 64-bit decode of 32-bit code fabricates push/call shapes (the
+/// x32 1.7 build showed 6 phantom gates out of 7).
+pub fn scan_gates_into_vm_bits(
+    data: &[u8], image_base: u64, vm: &[(u64, u64)], is64: bool,
+) -> Vec<u64> {
+    let bits = if is64 { 64 } else { 32 };
     let in_vm = |t: u64| vm.iter().any(|(b, e)| *b <= t && t < *e);
     let mut out = Vec::new();
     let mut off = 0usize;
     while off + 6 < data.len() {
-        let mut d = Decoder::with_ip(64, &data[off..], image_base + off as u64, DecoderOptions::NONE);
+        let mut d = Decoder::with_ip(bits, &data[off..], image_base + off as u64, DecoderOptions::NONE);
         let ins = d.decode();
         let len = ins.len().max(1);
         // NOTE: `push imm32` (opcode 68) decodes as Immediate32to64 in
@@ -51,13 +61,15 @@ pub fn scan_gates_into_vm(data: &[u8], image_base: u64, vm: &[(u64, u64)]) -> Ve
                 OpKind::Immediate32 | OpKind::Immediate64 | OpKind::Immediate32to64
             )
         {
-            let mut d2 = Decoder::with_ip(64, &data[off + len..], image_base + off as u64 + len as u64, DecoderOptions::NONE);
+            let mut d2 = Decoder::with_ip(bits, &data[off + len..], image_base + off as u64 + len as u64, DecoderOptions::NONE);
             for _ in 0..4 {
                 if !d2.can_decode() {
                     break;
                 }
                 let nx = d2.decode();
-                if nx.mnemonic() == Mnemonic::Call && nx.op0_kind() == OpKind::NearBranch64 {
+                if nx.mnemonic() == Mnemonic::Call
+                    && matches!(nx.op0_kind(), OpKind::NearBranch32 | OpKind::NearBranch64)
+                {
                     let tgt = nx.near_branch_target();
                     if vm.is_empty() || in_vm(tgt) {
                         out.push(image_base + off as u64);
@@ -78,18 +90,30 @@ pub fn scan_gates_into_vm(data: &[u8], image_base: u64, vm: &[(u64, u64)]) -> Ve
 /// not in VM sections).
 fn gates_in_exec(binary: &PEBinary, vm: &[(u64, u64)]) -> Result<Vec<u64>> {
     let pe = binary.parse_manual()?;
+    let is64 = pe.is64;
+    // Gate stubs live in ORIGINAL executable sections (`.text`), not in
+    // VM containers: scanning VM sections yields internal push/call
+    // noise (x32 1.7: 132 phantom gates inside `.vmp2`). Packed stubs
+    // (no file-backed `.text`) honestly report nothing — tracing owns
+    // those (32-bit tracing is still a harness gap).
+    let vm_idx: std::collections::HashSet<usize> =
+        crate::pe_loader::vm_candidate_sections(&pe).into_iter().collect();
     let mut out = Vec::new();
-    for s in &pe.sections {
+    for (i, s) in pe.sections.iter().enumerate() {
+        if vm_idx.contains(&i) {
+            continue;
+        }
         if s.raw_size == 0 || s.chars & 0x20000000 == 0 {
             continue;
         }
         let off = s.raw_ptr as usize;
         let end = off.saturating_add(s.raw_size as usize).min(binary.data.len());
         if off < end {
-            out.extend(scan_gates_into_vm(
+            out.extend(scan_gates_into_vm_bits(
                 &binary.data[off..end],
                 pe.image_base + s.rva as u64,
                 vm,
+                is64,
             ));
         }
     }
