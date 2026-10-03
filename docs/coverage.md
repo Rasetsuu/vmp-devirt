@@ -234,6 +234,17 @@ All compute `done e38e3794`. Pipeline run unchanged:
 | 3.9.6 ultra (mut+virt+antidbg max) | 352 | 24/40 | 24/0/0 | movzx 24/24 |
 | 3.2.0 ultra (same max) | 0 | 0/40 | — | observation: no strict sites (mechanism unidentified) |
 | 3.2.0 no-debug x4 (0/virt/mut/ultra) | 1 each | 0 mined (3 false-pos, 1 empty steps=0) | — | observation: antidebug shifts strict count 0→1, miner still 0; responsible fetch/VM-state representation not yet identified (negative control, see §3.2 lead) |
+
+## 3.2 dispatch census (traced, not hypothesized)
+
+Same capture flow both versions (entry-mode Unicorn, loose-`movzx` watches):
+
+| Version | Trace steps | jmp-reg/call-reg sites | Dispatch shape |
+|---|---|---|---|
+| 3.9.6 default | 73123 | 511 | register-indirect (`jmp reg`) — current anchors catch all |
+| 3.2.0 ultra | 12355 | 0 | memory-indirect: `jmp qword ptr [r12+r14*8]` @ `0x1402947d7`, 617 execs, 31 targets — anchors catch 0 |
+
+3.2's top executed fetch *is* `movzx r14d,[rsi]` @ `0x140294526` (618 execs) feeding `r14` = the dispatch index, but `mine` rejects it (no 3.x-style key-mix chain after). So the 3.2 gap is two concrete missing pieces, not a mystery: (1) `jmp-mem` anchors with base+index seeds, (2) post-fetch transform shape. Census data: `data/work/vmp320/`, `data/work/vmp396/` (local-only, not in repo).
 | 2.0.5 demo | v1-gate true, v3-fdj 2 false-pos (miner rejects) | — | — | v2-table needs table scan check |
 | 2.12.3 / 2.13.5 | v2-table true (287-entry RVA run in .vmp1, validated) + v1-gate true | — | — | first v2 frontend hit; v3-fdj candidates don't mine (correct reject) |
 | 2.13.8 ultra | all false (VM packed: 1 file-backed VM section) | — | — | needs trace, not static |
