@@ -264,7 +264,7 @@ No post-fetch transform exists — 3.2 is direct-threaded, raw byte to table:
 | 1.70.4 | v1-gate false (4 dropped: all inside `.vmp2`, VM-internal pairs) | 0 execs in 53k-step trace | — | stubs-only scope; would need trace (packed stubs) |
 | 1.7 x32 (fair-era input, runs `done e38e3794`) | v1-gate false (132 VM-internal pairs excluded; 6 of first 7 were 64-bit-misdecode phantoms) | — | — | bitness-aware decode added; packed `.text` needs 32-bit tracing (harness gap: Unicorn MODE_64 + 64-bit decoders only) |
 | 2.13.8 x32 (runs clean) | all false (longest exec-pointing u32 run in `.vmp2` = 14 < 64; `/N` sections raw-0) | — | — | table encrypted or runtime-unpacked; same verdict class as 2.13.8-64 ultra |
-| SDK32 DLL protected (x32, `.vmp1` backed) | all false (no tables, run=1; `.text` packed) | — | — | needs engine/options label from builder; static exhausted, 32-bit tracing owns it |
+| SDK32 DLL 2.13.8 (EntryPoint-only Ultra mut+virt, max protection, user+kernel antidbg, VM-tools detect, 1 VM) | all false (no tables, run=1; `.text` packed) | — | — | only DllMain protected, exports untouched; static exhausted, 32-bit tracing owns it |
 
 3.5.0 is Pushan's exact version: our static miner covers its fetch
 shapes with the same rules as 3.9.6 (their static-region assumption
