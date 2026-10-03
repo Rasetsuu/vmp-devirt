@@ -208,12 +208,18 @@ pub struct FetchDecoded {
 }
 
 /// Decode one VA with iced into back-slice facts.
-/// Register read/write sets: iced 1.21 has no per-operand access
-/// flags, so pure observers (`cmp`/`test` read everything) are
-/// special-cased; the rest use standard x86 shapes (op0 writes
-/// except read-only sources, arithmetic RMW reads+writes op0).
+///
+/// Register read/write sets come from iced's `InstructionInfoFactory`
+/// per-operand access (`OpAccess`): Read/CondRead count as reads,
+/// Write/CondWrite as writes, ReadWrite/ReadCondWrite as both.
+/// Conditional access is over-approximated as unconditional — the safe
+/// direction for back-slicing (a missing true dependency kills the
+/// slice with empty seeds; extras only cost precision). The old hand
+/// table mis-modeled `push`/`bt`/`cmov`/`xadd`/`call` (invented
+/// writes, dropped reads); the factory is ground truth here.
 pub fn decode_va(bytes: &[u8], va: u64) -> Option<FetchDecoded> {
     use iced_x86::{Decoder, DecoderOptions, Mnemonic, OpKind, Register};
+    use iced_x86::{InstructionInfoFactory, OpAccess};
     let mut d = Decoder::with_ip(64, bytes, va, DecoderOptions::NONE);
     if !d.can_decode() {
         return None;
@@ -221,35 +227,32 @@ pub fn decode_va(bytes: &[u8], va: u64) -> Option<FetchDecoded> {
     let ins = d.decode();
     let m = ins.mnemonic();
     let reg_name = |r: Register| reg_root(&format!("{:?}", r).to_lowercase());
-    // (reads op0, writes op0) for register operands.
-    let (ro0, wo0) = match m {
-        Mnemonic::Cmp | Mnemonic::Test => (true, false),
-        Mnemonic::Lea | Mnemonic::Mov | Mnemonic::Movzx | Mnemonic::Movsx
-        | Mnemonic::Pop | Mnemonic::Popcnt => (false, true),
-        Mnemonic::Xchg | Mnemonic::Add | Mnemonic::Sub | Mnemonic::And | Mnemonic::Or
-        | Mnemonic::Xor | Mnemonic::Inc | Mnemonic::Dec | Mnemonic::Neg | Mnemonic::Not
-        | Mnemonic::Shl | Mnemonic::Shr | Mnemonic::Sal | Mnemonic::Sar | Mnemonic::Rol
-        | Mnemonic::Ror | Mnemonic::Adc | Mnemonic::Sbb | Mnemonic::Mul | Mnemonic::Imul
-        | Mnemonic::Div | Mnemonic::Idiv => (true, true),
-        _ => (false, true), // default: dest writes (jcc/call/push read below)
-    };
+    let mut factory = InstructionInfoFactory::new();
+    let info = factory.info(&ins);
     let mut reads = Vec::new();
     let mut writes = Vec::new();
     for i in 0..ins.op_count() {
+        let acc = info.op_access(i);
+        let read = matches!(
+            acc,
+            OpAccess::Read | OpAccess::CondRead | OpAccess::ReadWrite | OpAccess::ReadCondWrite
+        );
+        let write = matches!(
+            acc,
+            OpAccess::Write | OpAccess::CondWrite | OpAccess::ReadWrite | OpAccess::ReadCondWrite
+        );
         match ins.op_kind(i) {
             OpKind::Register => {
                 let r = reg_name(ins.op_register(i));
-                let (ro, wo) = if i == 0 { (ro0, wo0) } else { (true, false) };
-                // xchg writes both sides.
-                let wo = wo || matches!(m, Mnemonic::Xchg);
-                if ro {
+                if read {
                     reads.push(r.clone());
                 }
-                if wo {
+                if write {
                     writes.push(r);
                 }
             }
             OpKind::Memory => {
+                // Address regs read even with NoMemAccess (`lea` math).
                 for mr in [ins.memory_base(), ins.memory_index()] {
                     if mr != Register::None {
                         reads.push(reg_name(mr));
@@ -593,5 +596,161 @@ mod tests {
         assert_eq!(out.len(), 2, "out={:?}", out);
         let fetch = out.iter().find(|c| c.va == 0x1000).expect("fetch voted");
         assert_eq!(fetch.chain_pos, 1);
+    }
+
+    /// Unicorn read/write oracle for `decode_va`.
+    ///
+    /// Differential ground truth: run one instruction with baseline
+    /// registers, re-run with each GPR flipped; any end-state
+    /// difference (regs/RIP/flags/stack) proves a read. A reg whose
+    /// value changes start → end is written. Assertion direction is
+    /// load-bearing: observed ⊆ model (slicing needs no missing
+    /// dependency; extras only cost precision), plus explicit
+    /// regression asserts for the old hand-table killers.
+    #[test]
+    fn decode_va_matches_unicorn_oracle() {
+        use unicorn_engine::{Unicorn, unicorn_const::{Arch, Mode, Prot}};
+        use unicorn_engine_sys::RegisterX86;
+        const CODE: u64 = 0x10000;
+        const STACK: u64 = 0x20000;
+        const STUB: u64 = 0x30000;
+        // (name, bytes, eflags, rax_override)
+        let cases: &[(&str, &[u8], u64, Option<u64>)] = &[
+            ("push rax", &[0x50], 0x202, None),
+            ("pop rax", &[0x58], 0x202, None),
+            ("bt rax,3", &[0x48, 0x0F, 0xBA, 0xE0, 0x03], 0x202, None),
+            ("cmovz rax,rbx", &[0x48, 0x0F, 0x44, 0xC3], 0x246, None),
+            ("cmovz-nc rax,rbx", &[0x48, 0x0F, 0x44, 0xC3], 0x206, None),
+            ("xadd rax,rbx", &[0x48, 0x0F, 0xC1, 0xD8], 0x202, None),
+            ("mov rax,rbx", &[0x48, 0x89, 0xD8], 0x202, None),
+            ("add rax,rbx", &[0x48, 0x01, 0xD8], 0x202, None),
+            ("xor rax,rax", &[0x48, 0x31, 0xC0], 0x202, None),
+            ("test rax,rbx", &[0x48, 0x85, 0xD8], 0x202, None),
+            ("call rax", &[0xFF, 0xD0], 0x202, Some(STUB)),
+            ("jmp rax", &[0xFF, 0xE0], 0x202, Some(STUB)),
+        ];
+        let regs: &[(RegisterX86, u64, &str)] = &[
+            (RegisterX86::RAX, 0x1111111111111111, "rax"),
+            (RegisterX86::RBX, 0x2222222222222222, "rbx"),
+            (RegisterX86::RCX, 0x3333333333333333, "rcx"),
+            (RegisterX86::RDX, 0x4444444444444444, "rdx"),
+            (RegisterX86::RSI, 0x5555555555555555, "rsi"),
+            (RegisterX86::RDI, 0x6666666666666666, "rdi"),
+            (RegisterX86::RBP, 0x7777777777777777, "rbp"),
+            (RegisterX86::R8, 0x8888888888888888, "r8"),
+            (RegisterX86::R9, 0x9999999999999999, "r9"),
+            (RegisterX86::R10, 0xAAAAAAAAAAAAAAAA, "r10"),
+            (RegisterX86::R11, 0xBBBBBBBBBBBBBBBB, "r11"),
+            (RegisterX86::R12, 0xCCCCCCCCCCCCCCCC, "r12"),
+            (RegisterX86::R13, 0xDDDDDDDDDDDDDDDD, "r13"),
+            (RegisterX86::R14, 0xEEEEEEEEEEEEEEEE, "r14"),
+            (RegisterX86::R15, 0xFFFFFFFFFFFFFFFE, "r15"),
+        ];
+        // Full compared state: probed regs + RIP/RSP/EFLAGS + stack window.
+        fn run(
+            name: &str, bytes: &[u8], eflags: u64, rax_ov: Option<u64>,
+            flip: Option<(RegisterX86, u64)>,
+            regs: &[(RegisterX86, u64, &str)],
+        ) -> Vec<u64> {
+            let mut emu = Unicorn::new(Arch::X86, Mode::MODE_64).unwrap();
+            emu.mem_map(CODE, 0x1000, Prot::ALL).unwrap();
+            emu.mem_map(STACK, 0x1000, Prot::ALL).unwrap();
+            emu.mem_map(STUB, 0x1000, Prot::ALL).unwrap();
+            emu.mem_write(CODE, bytes).unwrap();
+            emu.mem_write(STUB, &[0xC3]).unwrap(); // ret stub
+            emu.mem_write(STACK + 0x800, &0xA5A5A5A5A5A5A5A5u64.to_le_bytes()).unwrap();
+            for (r, v, _) in regs {
+                let mut val = *v;
+                if *r == RegisterX86::RAX {
+                    if let Some(o) = rax_ov {
+                        val = o;
+                    }
+                }
+                if let Some((fr, fv)) = flip {
+                    if fr == *r {
+                        val = fv;
+                    }
+                }
+                emu.reg_write(*r, val).unwrap();
+            }
+            emu.reg_write(RegisterX86::RSP, STACK + 0x800).unwrap();
+            emu.reg_write(RegisterX86::RIP, CODE).unwrap();
+            emu.reg_write(RegisterX86::EFLAGS, eflags).unwrap();
+            emu.emu_start(CODE, u64::MAX, 0, 1)
+                .unwrap_or_else(|e| panic!("{} flip {:?}: {:?}", name, flip.map(|(r, _)| format!("{:?}", r)), e));
+            let mut state: Vec<u64> = regs
+                .iter()
+                .map(|(r, _, _)| emu.reg_read(*r).unwrap())
+                .collect();
+            state.push(emu.reg_read(RegisterX86::RIP).unwrap());
+            state.push(emu.reg_read(RegisterX86::RSP).unwrap());
+            state.push(emu.reg_read(RegisterX86::EFLAGS).unwrap());
+            let mut stack = vec![0u8; 0x200];
+            emu.mem_read(STACK + 0x700, &mut stack).unwrap();
+            for b in stack {
+                state.push(b as u64);
+            }
+            state
+        }
+        for (name, bytes, flags, rax_ov) in cases {
+            let base_state = run(name, bytes, *flags, *rax_ov, None, regs);
+            let mut observed_reads: Vec<String> = Vec::new();
+            for (idx, (r, v, n)) in regs.iter().enumerate() {
+                // Full inversion maximizes influence; the call/jmp
+                // target stays mapped (small in-page delta) so the
+                // single step never faults on the transfer itself.
+                let flipped = if *n == "rax" && rax_ov.is_some() {
+                    STUB + 0x10
+                } else {
+                    !v
+                };
+                let mut st = run(name, bytes, *flags, *rax_ov, Some((*r, flipped)), regs);
+                // The flipped input trivially differs: exclude its own
+                // slot, compare everything it could influence.
+                st[idx] = base_state[idx];
+                if st != base_state {
+                    observed_reads.push(n.to_string());
+                }
+            }
+            let mut observed_writes: Vec<String> = Vec::new();
+            for ((_, v, n), end) in regs.iter().zip(base_state.iter()) {
+                let mut init = *v;
+                if *n == "rax" {
+                    if let Some(o) = rax_ov {
+                        init = *o;
+                    }
+                }
+                if *end != init {
+                    observed_writes.push(n.to_string());
+                }
+            }
+            let model = decode_va(bytes, CODE).unwrap_or_else(|| panic!("{} undecodable", name));
+            for r in &observed_reads {
+                assert!(model.reads.contains(r), "{}: oracle read {} missing from model {:?}", name, r, model.reads);
+            }
+            for w in &observed_writes {
+                assert!(model.writes.contains(w), "{}: oracle write {} missing from model {:?}", name, w, model.writes);
+            }
+            // Old-killer regressions (must hold exactly, not just ⊆).
+            match *name {
+                "push rax" => {
+                    assert!(model.reads.contains(&"rax".to_string()), "push must read rax: {:?}", model);
+                    assert!(!model.writes.contains(&"rax".to_string()), "push must not define rax: {:?}", model);
+                }
+                "bt rax,3" => {
+                    assert!(model.reads.contains(&"rax".to_string()), "bt must read rax: {:?}", model);
+                    assert!(!model.writes.contains(&"rax".to_string()), "bt must not define rax: {:?}", model);
+                }
+                "xadd rax,rbx" => {
+                    assert!(model.reads.contains(&"rax".to_string()), "xadd must read rax: {:?}", model);
+                    assert!(model.writes.contains(&"rbx".to_string()), "xadd must write rbx: {:?}", model);
+                }
+                "call rax" => {
+                    assert!(model.reads.contains(&"rax".to_string()), "call must read target: {:?}", model);
+                    assert!(model.is_call, "call flag");
+                }
+                _ => {}
+            }
+        }
     }
 }
