@@ -1,12 +1,12 @@
 //! vmp-devirt CLI: scan / mine / decode.
 use anyhow::{Context, Result};
-use vmp_devirt::frontend::{VmFrontend, v1_gate::V1Gate, v2_walker::V2Table, v3_fdj::V3Fdj};
+use vmp_devirt::frontend::{VmFrontend, v1_gate::V1Gate, v2_walker::V2Table, v3_fdj::V3Fdj, tigress::Tigress};
 use vmp_devirt::frontend::fetch_finder::FetchSite;
 use vmp_devirt::frontend::cryptor_miner::mine_cryptor;
 use vmp_devirt::pe_loader::PEBinary;
 
 fn frontends() -> Vec<Box<dyn VmFrontend>> {
-    vec![Box::new(V1Gate), Box::new(V2Table), Box::new(V3Fdj)]
+    vec![Box::new(V1Gate), Box::new(V2Table), Box::new(V3Fdj), Box::new(Tigress)]
 }
 
 fn main() -> Result<()> {

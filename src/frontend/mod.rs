@@ -12,6 +12,7 @@ pub mod classifier_legacy;
 pub mod v1_gate;
 pub mod v2_walker;
 pub mod v3_fdj;
+pub mod tigress;
 
 use anyhow::Result;
 use crate::pe_loader::PEBinary;
