@@ -232,8 +232,8 @@ All compute `done e38e3794`. Pipeline run unchanged:
 | 3.3.1 licensed | 16 | 10/40 (9 chains) | 7/0 | movzx/movsx |
 | 3.5.0 | 16 | 9/40 (8 chains) | 8/0 | movzx 8/8 |
 | 3.9.6 ultra (mut+virt+antidbg max) | 352 | 24/40 | 24/0/0 | movzx 24/24 |
-| 3.2.0 ultra (same max) | 0 | 0/40 | — | no sites (mutation hides fetch) |
-| 3.2.0 no-debug x4 (0/virt/mut/ultra) | 1 each | 0 mined (3 false-pos, 1 empty steps=0) | — | antidebug worth exactly 1 strict-visible site; 3.2 codegen defeats miner regardless |
+| 3.2.0 ultra (same max) | 0 | 0/40 | — | observation: no strict sites (mechanism unidentified) |
+| 3.2.0 no-debug x4 (0/virt/mut/ultra) | 1 each | 0 mined (3 false-pos, 1 empty steps=0) | — | observation: antidebug shifts strict count 0→1, miner still 0; responsible fetch/VM-state representation not yet identified (negative control, see §3.2 lead) |
 | 2.0.5 demo | v1-gate true, v3-fdj 2 false-pos (miner rejects) | — | — | v2-table needs table scan check |
 | 2.12.3 / 2.13.5 | v2-table true (287-entry RVA run in .vmp1, validated) + v1-gate true | — | — | first v2 frontend hit; v3-fdj candidates don't mine (correct reject) |
 | 2.13.8 ultra | all false (VM packed: 1 file-backed VM section) | — | — | needs trace, not static |
