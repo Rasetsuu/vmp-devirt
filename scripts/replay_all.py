@@ -42,14 +42,20 @@ def main():
     sh("g++ -O2 -I%s -o %s/replay %s/driver.cpp %s/runtime.o %s/plt.o %s/obj/b_*.o -lz -ldl"
        % (drv, drv, rp, drv, drv, work))
     print("== run")
-    out = sh(" ".join([
-        "REPLAY_BIN=%s" % binary,
-        "REPLAY_TRACE=%s/open_trace.bin" % tdir,
-        "REPLAY_FRAME=${REPLAY_FRAME:-0}",
-        "REPLAY_ARGS=${REPLAY_ARGS:-}",
-        "REPLAY_POOL=${REPLAY_POOL:-0x140002000,0x3000}",
-        "%s/replay %s %s %s/open_trace.bin" % (drv, bound, binary, tdir),
-    ]), cwd=drv)
+    # Pass-through only when set: the driver tests presence
+    # (getenv != NULL), so empty defaults would wrongly enable
+    # frame mode; the pool default is VMP-specific (Tigress runs
+    # must export their own REPLAY_POOL). REPLAY_NOHASH=1 dodges
+    # libz SIMD faults on unmapped hash regions (host-dependent).
+    env = " ".join(
+        ["REPLAY_BIN=%s" % binary,
+         "REPLAY_TRACE=%s/open_trace.bin" % tdir]
+        + (["REPLAY_FRAME=%s" % os.environ["REPLAY_FRAME"]] if "REPLAY_FRAME" in os.environ else [])
+        + (["REPLAY_ARGS=%s" % os.environ["REPLAY_ARGS"]] if "REPLAY_ARGS" in os.environ else [])
+        + (["REPLAY_POOL=%s" % os.environ["REPLAY_POOL"]] if "REPLAY_POOL" in os.environ else ["REPLAY_POOL=0x140002000,0x3000"])
+        + (["REPLAY_NOHASH=%s" % os.environ["REPLAY_NOHASH"]] if "REPLAY_NOHASH" in os.environ else [])
+    )
+    out = sh("%s %s/replay %s %s %s/open_trace.bin" % (env, drv, bound, binary, tdir), cwd=drv)
     print(out[-800:])
     # align check: replay legs as subsequence of trace
     trs = struct.unpack("<%dQ" % (os.path.getsize(tdir + "/open_trace.bin") // 8),

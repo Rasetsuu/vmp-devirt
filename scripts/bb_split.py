@@ -102,8 +102,11 @@ def main():
             continue
         ft = va + ins.size
         for b in ss:
-            if b != ft:
-                starts.add(b)
+            # Every edge out of a CF seeds a block: non-ft successors
+            # AND the fall-through (a block that ends in CF never
+            # covers its fall-through; the flatvirt loop init/call
+            # blocks were lost exactly this way).
+            starts.add(b)
     ind_cache = {}
 
     def is_indjmp(va):

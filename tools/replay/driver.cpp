@@ -239,12 +239,17 @@ int main(int argc, char **argv) {
     auto it = m.find(pc);
     if (it == m.end()) { missing = pc; break; }
     if (log) { uint64_t v = pc; fwrite(&v, 8, 1, log); }
+    // REPLAY_NOHASH=1: skip region hashing (regs still logged).
+    // libz SIMD overreads at mapping edges fault on some hosts;
+    // hashes are diagnostic (divergence localization), pcs are
+    // what the align-check consumes.
+    bool nohash = getenv("REPLAY_NOHASH") != nullptr;
     if (rlog) {
       for (unsigned k = 0; k < 17; k++) { uint64_t v = rreg(st, kROff[k]); fwrite(&v, 8, 1, rlog); }
-      uint64_t hs = reghash((uint8_t *)0x7FF00000, 0x100000);
-      uint64_t hp = reghash((uint8_t *)poolreg, (unsigned)poolsz);
-      uint64_t hh = reghash((uint8_t *)0x71000000, 0x100000);
-      uint64_t hg = reghash((uint8_t *)0x300000, 0x100000);
+      uint64_t hs = nohash ? 0 : reghash((uint8_t *)0x7FF00000, 0x100000);
+      uint64_t hp = nohash ? 0 : reghash((uint8_t *)poolreg, (unsigned)poolsz);
+      uint64_t hh = nohash ? 0 : reghash((uint8_t *)0x71000000, 0x100000);
+      uint64_t hg = nohash ? 0 : reghash((uint8_t *)0x300000, 0x100000);
       fwrite(&hs, 8, 1, rlog); fwrite(&hp, 8, 1, rlog);
       fwrite(&hh, 8, 1, rlog); fwrite(&hg, 8, 1, rlog);
     }
@@ -285,11 +290,12 @@ int main(int argc, char **argv) {
       uLong a = adler32(0L, Z_NULL, 0);
       return (uint64_t)adler32(a, (const Bytef *)p, n);
     };
+    bool nohash2 = getenv("REPLAY_NOHASH") != nullptr;
     printf("final stack=%#lx pool=%#lx heap=%#lx staged=%#lx\n",
-           (unsigned long)rh((uint8_t *)0x7FF00000, 0x100000),
-           (unsigned long)rh((uint8_t *)poolreg, (unsigned)poolsz),
-           (unsigned long)rh((uint8_t *)0x71000000, 0x100000),
-           (unsigned long)rh((uint8_t *)0x300000, 0x100000));
+           nohash2 ? 0 : (unsigned long)rh((uint8_t *)0x7FF00000, 0x100000),
+           nohash2 ? 0 : (unsigned long)rh((uint8_t *)poolreg, (unsigned)poolsz),
+           nohash2 ? 0 : (unsigned long)rh((uint8_t *)0x71000000, 0x100000),
+           nohash2 ? 0 : (unsigned long)rh((uint8_t *)0x300000, 0x100000));
     uint64_t him = 0;
     for (auto &s : kSecs) {
       uLong a = adler32(0L, Z_NULL, 0);
