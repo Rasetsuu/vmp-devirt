@@ -245,6 +245,18 @@ Same capture flow both versions (entry-mode Unicorn, loose-`movzx` watches):
 | 3.2.0 ultra | 12355 | 0 | memory-indirect: `jmp qword ptr [r12+r14*8]` @ `0x1402947d7`, 617 execs, 31 targets — anchors catch 0 |
 
 3.2's top executed fetch *is* `movzx r14d,[rsi]` @ `0x140294526` (618 execs) feeding `r14` = the dispatch index, but `mine` rejects it (no 3.x-style key-mix chain after). So the 3.2 gap is two concrete missing pieces, not a mystery: (1) `jmp-mem` anchors with base+index seeds, (2) post-fetch transform shape. Census data: `data/work/vmp320/`, `data/work/vmp396/` (local-only, not in repo).
+
+## 3.2 model recovered (617/617 visits, traced)
+
+No post-fetch transform exists — 3.2 is direct-threaded, raw byte to table:
+
+| Step | Instruction | Role |
+|---|---|---|
+| fetch | `movzx r14d,[rsi]` @ `0x140294526` | index byte, base `rsi` (VPC) |
+| dispatch | `jmp [r12+r14*8]` @ `0x1402947d7` | 31 targets, table base `r12` |
+| advance | `sub rsi,1` ×2 per cycle | VPC walks backward (stride med=-2) |
+
+`byte → handler` through the live table: **617/617 exact**. Two traps that look like crypto and aren't: the table base is 72 bytes below the min observed read (min byte value was `0x09`, not index 0), and file bytes past the true table end are a different structure (reads as garbage — confirm against the *live* snapshot, not the file). `mine` rejecting 3.2 sites is correct behavior (nothing to mine); table-mapping is the 3.2 "decode".
 | 2.0.5 demo | v1-gate true, v3-fdj 2 false-pos (miner rejects) | — | — | v2-table needs table scan check |
 | 2.12.3 / 2.13.5 | v2-table true (287-entry RVA run in .vmp1, validated) + v1-gate true | — | — | first v2 frontend hit; v3-fdj candidates don't mine (correct reject) |
 | 2.13.8 ultra | all false (VM packed: 1 file-backed VM section) | — | — | needs trace, not static |
