@@ -183,6 +183,14 @@ fn main() -> Result<()> {
                     && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
                 {
                     indirect.insert(va);
+                } else if ins.mnemonic() == iced_x86::Mnemonic::Jmp
+                    && matches!(ins.op0_kind(), iced_x86::OpKind::Memory)
+                {
+                    // Table dispatch (VMP 3.2 `jmp [base+idx*scale]`):
+                    // the index walks back to the fetch, the base to
+                    // table setup. Both seed the slice (backend takes
+                    // a seed vec per site).
+                    indirect.insert(va);
                 } else if ins.mnemonic() == iced_x86::Mnemonic::Call
                     && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
                 {
@@ -671,7 +679,24 @@ fn main() -> Result<()> {
                     && matches!(ins.op0_kind(), iced_x86::OpKind::Register)
                 {
                     sites.insert(va);
-                    tregs.insert(va, format!("{:?}", ins.op_register(0)).to_lowercase());
+                    tregs.insert(va, vec![format!("{:?}", ins.op_register(0)).to_lowercase()]);
+                } else if ins.mnemonic() == iced_x86::Mnemonic::Jmp
+                    && matches!(ins.op0_kind(), iced_x86::OpKind::Memory)
+                {
+                    // Table dispatch (VMP 3.2 `jmp [base+idx*scale]`):
+                    // seed both base and index; the index walks back
+                    // to the fetch, the base to table setup.
+                    use iced_x86::Register as IR;
+                    let mut seeds = Vec::new();
+                    for r in [ins.memory_base(), ins.memory_index()] {
+                        if r != IR::None {
+                            seeds.push(format!("{:?}", r).to_lowercase());
+                        }
+                    }
+                    if !seeds.is_empty() {
+                        sites.insert(va);
+                        tregs.insert(va, seeds);
+                    }
                 }
             }
             eprintln!("fetch: {} dispatch sites, trace steps {}", sites.len(), trace.len());

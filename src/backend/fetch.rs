@@ -294,11 +294,12 @@ pub fn decode_va(bytes: &[u8], va: u64) -> Option<FetchDecoded> {
 /// Discover fetch candidates from a full trace + dispatch sites.
 /// For every occurrence of every dispatch site, back-slice to the
 /// first load; votes accumulate per (load VA, dispatch site).
-/// `target_regs` maps dispatch VA -> jump-target register name.
+/// `target_regs` maps dispatch VA -> seed register names (jump target
+/// for `jmp reg`; base + index for `jmp [base+idx*scale]`).
 pub fn discover(
     trace: &[u64],
     dispatch_sites: &BTreeSet<u64>,
-    target_regs: &BTreeMap<u64, String>,
+    target_regs: &BTreeMap<u64, Vec<String>>,
     decode: &dyn Fn(u64) -> Option<FetchDecoded>,
     depth: usize,
 ) -> Vec<FetchCandidate> {
@@ -308,7 +309,7 @@ pub fn discover(
 pub fn discover_stats(
     trace: &[u64],
     dispatch_sites: &BTreeSet<u64>,
-    target_regs: &BTreeMap<u64, String>,
+    target_regs: &BTreeMap<u64, Vec<String>>,
     decode: &dyn Fn(u64) -> Option<FetchDecoded>,
     depth: usize,
     mut stats: Option<&mut SliceStats>,
@@ -318,11 +319,11 @@ pub fn discover_stats(
         if !dispatch_sites.contains(va) {
             continue;
         }
-        let treg = match target_regs.get(va) {
+        let seeds = match target_regs.get(va) {
             Some(t) => t.clone(),
             None => continue,
         };
-        for (pos, (load_va, base)) in backslice_chain(trace, idx, &[treg.clone()], depth, decode)
+        for (pos, (load_va, base)) in backslice_chain(trace, idx, &seeds, depth, decode)
             .into_iter()
             .enumerate()
         {
@@ -528,7 +529,7 @@ mod tests {
         let trace = vec![0x100u64, 0x300, 0x100, 0x300, 0x100, 0x300];
         let d = |va: u64| t.get(&va).cloned();
         let sites = BTreeSet::from([0x300u64]);
-        let regs = BTreeMap::from([(0x300u64, "rax".to_string())]);
+        let regs = BTreeMap::from([(0x300u64, vec!["rax".to_string()])]);
         let out = discover(&trace, &sites, &regs, &d, 8);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].va, 0x100);
@@ -572,8 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn table_in_the_middle_yields_chain() {
-        // Claude's case: fetch -> handler-table load -> jmp.
+    fn table_in_the_middle_yields_chain() {        // Claude's case: fetch -> handler-table load -> jmp.
         //   0x1000: movzx eax, byte ptr [rsi]      (fetch, base rsi)
         //   0x1003: mov rax, [rdi+rax*8]           (table, base rdi)
         //   0x1007: jmp rax
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(chain[1].1, "rsi");
         // discover() votes both positions
         let sites = BTreeSet::from([0x1007u64]);
-        let regs = BTreeMap::from([(0x1007u64, "rax".to_string())]);
+        let regs = BTreeMap::from([(0x1007u64, vec!["rax".to_string()])]);
         let out = discover(&trace, &sites, &regs, &d, 16);
         assert_eq!(out.len(), 2, "out={:?}", out);
         let fetch = out.iter().find(|c| c.va == 0x1000).expect("fetch voted");
@@ -752,5 +752,23 @@ mod tests {
                 _ => {}
             }
         }
+    }
+    #[test]
+    fn mem_indirect_dispatch_seeds_base_and_index() {
+        // VMP 3.2 shape: fetch -> index -> jmp [base+idx*8].
+        //   0x1000: movzx r14d, byte ptr [rsi]   (fetch, base rsi)
+        //   0x1007: jmp qword ptr [r12+r14*8]    (dispatch)
+        // Base+index seeds must surface the fetch via the index.
+        use iced_x86::Mnemonic as M;
+        let mut t: HashMap<u64, FetchDecoded> = HashMap::new();
+        t.insert(0x1000, dec(M::Movzx, &["rsi"], &["r14"], Some("rsi"), false));
+        t.insert(0x1007, dec(M::Jmp, &["r12", "r14"], &[], None, false));
+        let trace = vec![0x1000u64, 0x1007, 0x2000];
+        let d = |va: u64| t.get(&va).cloned();
+        let sites = BTreeSet::from([0x1007u64]);
+        let regs = BTreeMap::from([(0x1007u64, vec!["r12".to_string(), "r14".to_string()])]);
+        let out = discover(&trace, &sites, &regs, &d, 16);
+        let fetch = out.iter().find(|c| c.va == 0x1000).expect("fetch via index seed");
+        assert_eq!(fetch.base, "rsi");
     }
 }
