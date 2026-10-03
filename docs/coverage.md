@@ -261,7 +261,8 @@ No post-fetch transform exists — 3.2 is direct-threaded, raw byte to table:
 | 2.12.3 / 2.13.5 | v2-table true (287-entry RVA run in .vmp1, validated) + v1-gate true | — | — | first v2 frontend hit; v3-fdj candidates don't mine (correct reject) |
 | 2.13.8 ultra | all false (VM packed: 1 file-backed VM section) | — | — | needs trace, not static |
 | 1.54 | v1-gate true (1 gate `.text→.vmp1`, byte-verified) | live: gate execs once, trace enters VM @ `0x140178bf`, returns to `.text` (614 steps) | — | Immediate32to64 fix (matcher was dead); target-filtered scan |
-| 1.70.4 | v1-gate true (4 gates) | 0 execs in 53k-step trace (gates ~40KB from execution — cold region) | — | static-only; forcing sweep queued (same cold-path tooling as MBA guards) |
+| 1.70.4 | v1-gate false (4 dropped: all inside `.vmp2`, VM-internal pairs) | 0 execs in 53k-step trace | — | stubs-only scope; would need trace (packed stubs) |
+| 1.7 x32 (fair-era input, runs `done e38e3794`) | v1-gate false (132 VM-internal pairs excluded; 6 of first 7 were 64-bit-misdecode phantoms) | — | — | bitness-aware decode added; packed `.text` needs 32-bit tracing (harness gap: Unicorn MODE_64 + 64-bit decoders only) |
 
 3.5.0 is Pushan's exact version: our static miner covers its fetch
 shapes with the same rules as 3.9.6 (their static-region assumption
