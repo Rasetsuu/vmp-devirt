@@ -89,6 +89,25 @@ heap, staged).
   unreliable across llc frames), unbuffered crash-safe logs,
   BB coverage of ret/indirect successors + cap-cut continuations.
 
+## Tigress replay re-validation (fixed driver)
+
+All four dispatch modes + flatvirt re-run green after the `REPLAY_NOHASH`
+and env pass-through fixes (libz SIMD faults had red-denied every replay
+on this host, including past "equivalent" claims):
+
+| Mode | Legs | Align | Exit |
+|---|---|---|---|
+| switch | 52004 | 52004/52004 | 0 |
+| direct | 12003 | 12003/12003 | 0 |
+| indirect | 12504 | 12504/12504 | 0 |
+| call | 19504 | 19504/19504 | 0 |
+| flatvirt | 158921 | 158921/158921 | 0 |
+
+Flatvirt footnote: the old "early return without calling max" was a
+pcs-logging blind spot (direct LLVM calls execute invisibly to the
+driver-dispatched log) — `replay_regs.bin` rax proves max called 200×
+with live returns. Plus a stale 28-block lift (loop tail missing).
+
 ## Recompilability (factory port + runnable proof)
 
 Lift: add2 BBs, **7012/7012 objects** via Remill + `opt -O3` + `llc`,
